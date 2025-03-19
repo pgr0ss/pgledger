@@ -50,9 +50,6 @@ select * from pgledger_entries where account_id = $account_2_id;
 - Add more constraints
   - Transfer amounts are positive
   - From/To aren't the same account
-- Add GitHub Action to run tests
-  - Add golangci-lint?
-  - Look into sql linter?
 - Add effective date to transfers (for when the transfer is recorded now, but it's related to something from the past)
 - Add metadata to accounts and transfers - json column?
 - Better primary keys - UUIDs? ULIDs? with prefixes or not? ideally monotonic
