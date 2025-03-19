@@ -1,14 +1,14 @@
-set dotenv-path := ".env"
+dbname := "pgledger"
 
 psql:
-  docker compose exec postgres psql $DATABASE_URL
+  docker compose exec postgres env PGPASSWORD={{dbname}} psql -U {{dbname}} {{dbname}}
 
 dbclean:
-  docker compose exec postgres dropdb --force --maintenance-db $MAINTENANCE_URL $DBNAME || echo "db doesn't exist"
-  docker compose exec postgres createdb --maintenance-db $MAINTENANCE_URL $DBNAME
+  docker compose exec postgres dropdb --force -U {{dbname}} {{dbname}} || echo "db doesn't exist"
+  docker compose exec postgres createdb -U {{dbname}} {{dbname}}
 
 dbload:
-  docker compose exec --no-TTY postgres psql $DATABASE_URL --single-transaction -f /code/pgledger.sql
+  docker compose exec --no-TTY postgres psql -U {{dbname}} --single-transaction -f /code/pgledger.sql {{dbname}}
 
 dbreset: dbclean dbload
 
