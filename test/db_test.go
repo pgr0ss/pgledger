@@ -25,6 +25,8 @@ func TestAddAccount(t *testing.T) {
 	assert.Equal(t, 0, account.Version)
 	assert.WithinDuration(t, time.Now(), account.CreatedAt, time.Minute)
 	assert.Equal(t, account.CreatedAt, account.UpdatedAt)
+
+	assert.Equal(t, 1, 2)
 }
 
 func TestAccountsThatCannotBeNegative(t *testing.T) {
