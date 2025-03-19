@@ -1,6 +1,8 @@
 # pgledger
 
-A ledger implementation in PostgreSQL
+A ledger implementation in PostgreSQL.
+
+The implementation is currently in a single file: [pgledger.sql](/pgledger.sql).
 
 ## Usage
 
