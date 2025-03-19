@@ -2,6 +2,47 @@
 
 A ledger implementation in PostgreSQL
 
+## Usage
+
+Set up your accounts:
+
+```sql
+select id from pgledger_create_account('account_1'); -- save this as account_1_id
+select id from pgledger_create_account('account_2'); -- save this as account_2_id
+```
+
+Create transfers:
+
+```sql
+	select * from pgledger_create_transfer($account_1_id, $account_2_id, 12.34);
+	select * from pgledger_create_transfer($account_1_id, $account_2_id, 56.78);
+
+	select * from pgledger_create_transfer(41, 42, 12.34);
+	select * from pgledger_create_transfer(41, 42, 56.78);
+```
+
+See updated balances:
+
+```sql
+select name, balance, version from pgledger_get_account($account_2_id);
+
+   name    | balance | version
+-----------+---------+---------
+ account_2 |   69.12 |       2
+```
+
+See ledger entries:
+
+```sql
+select * from pgledger_entries where account_id = $account_2_id;
+
+  id   | account_id | transfer_id | amount | account_previous_balance | account_current_balance | account_version |          created_at
+-------+------------+-------------+--------+--------------------------+-------------------------+-----------------+-------------------------------
+ 96198 |         42 |       48103 |  12.34 |                     0.00 |                   12.34 |               1 | 2025-03-19 21:31:03.596426+00
+ 96200 |         42 |       48104 |  56.78 |                    12.34 |                   69.12 |               2 | 2025-03-19 21:31:21.615916+00
+(2 rows)
+```
+
 ## TODO
 
 - Add more constraints
