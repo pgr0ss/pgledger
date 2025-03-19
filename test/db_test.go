@@ -43,9 +43,6 @@ func TestAccountsThatCannotBeNegative(t *testing.T) {
 	_, err = createTransfer(ctx, conn, account1ID, account2.ID, "12.34")
 	assert.ErrorContains(t, err, fmt.Sprintf("Account (id=%s, name=%s) does not allow negative balance", account1ID, "positive-only"))
 
-	_, err = createTransfer(ctx, conn, account2.ID, account1ID, "-12.34")
-	assert.ErrorContains(t, err, fmt.Sprintf("Account (id=%s, name=%s) does not allow negative balance", account1ID, "positive-only"))
-
 	foundAccount1, err := getAccount(ctx, conn, account1ID)
 	assert.NoError(t, err)
 
@@ -70,9 +67,6 @@ func TestAccountsThatCannotBePositive(t *testing.T) {
 	assert.NoError(t, err)
 
 	_, err = createTransfer(ctx, conn, account2.ID, account1ID, "12.34")
-	assert.ErrorContains(t, err, fmt.Sprintf("Account (id=%s, name=%s) does not allow positive balance", account1ID, "negative-only"))
-
-	_, err = createTransfer(ctx, conn, account1ID, account2.ID, "-12.34")
 	assert.ErrorContains(t, err, fmt.Sprintf("Account (id=%s, name=%s) does not allow positive balance", account1ID, "negative-only"))
 
 	foundAccount1, err := getAccount(ctx, conn, account1ID)
@@ -283,6 +277,34 @@ func TestEntries(t *testing.T) {
 	assert.Equal(t, "-5", entries[2].AccountCurrentBalance)
 	assert.Equal(t, 3, entries[2].AccountVersion)
 	assert.WithinDuration(t, time.Now(), entries[2].CreatedAt, time.Minute)
+}
+
+func TestTransferAmountsArePositive(t *testing.T) {
+	conn := dbconn(t)
+	ctx := t.Context()
+
+	account1, err := createAccount(ctx, conn, "account 1")
+	assert.NoError(t, err)
+
+	account2, err := createAccount(ctx, conn, "account 2")
+	assert.NoError(t, err)
+
+	_, err = createTransfer(ctx, conn, account1.ID, account2.ID, "0")
+	assert.ErrorContains(t, err, "Amount (0) must be positive")
+
+	_, err = createTransfer(ctx, conn, account1.ID, account2.ID, "-0.01")
+	assert.ErrorContains(t, err, "Amount (-0.01) must be positive")
+}
+
+func TestTransfersUseDifferentAccounts(t *testing.T) {
+	conn := dbconn(t)
+	ctx := t.Context()
+
+	account1, err := createAccount(ctx, conn, "account 1")
+	assert.NoError(t, err)
+
+	_, err = createTransfer(ctx, conn, account1.ID, account1.ID, "10")
+	assert.ErrorContains(t, err, fmt.Sprintf("Cannot transfer to the same account (id=%s)", account1.ID))
 }
 
 func TestConcurrency(t *testing.T) {

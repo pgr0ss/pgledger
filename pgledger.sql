@@ -14,7 +14,8 @@ CREATE TABLE pgledger_transfers (
     from_account_id BIGINT NOT NULL REFERENCES pgledger_accounts(id),
     to_account_id BIGINT NOT NULL REFERENCES pgledger_accounts(id),
     amount NUMERIC NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL
+    created_at TIMESTAMPTZ NOT NULL,
+    CHECK (amount > 0 AND from_account_id != to_account_id)
 );
 
 CREATE INDEX ON pgledger_transfers(from_account_id);
@@ -110,6 +111,15 @@ DECLARE
     from_account RECORD;
     to_account RECORD;
 BEGIN
+    -- Preliminary checks
+    IF amount_param <= 0 THEN
+        RAISE EXCEPTION 'Amount (%) must be positive', amount_param;
+    END IF;
+
+    IF from_account_id_param = to_account_id_param THEN
+        RAISE EXCEPTION 'Cannot transfer to the same account (id=%)', from_account_id_param;
+    END IF;
+
     -- Lock accounts in a consistent order to prevent deadlocks
     -- Lock first account
     PERFORM pgledger_accounts.id
