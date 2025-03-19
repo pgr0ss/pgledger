@@ -1,0 +1,35 @@
+name: Run Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: extractions/setup-just@v2
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "test/go.mod"
+          cache-dependency-path: "test/go.sum"
+
+      - name: Start Docker Compose
+        run: docker-compose up --wait
+
+      - name: Run Go tests
+        run: just --timestamp check
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: test
+          version: latest
+          args: --timeout 2m --verbose
