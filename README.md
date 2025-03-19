@@ -47,9 +47,6 @@ select * from pgledger_entries where account_id = $account_2_id;
 
 ## TODO
 
-- Add more constraints
-  - Transfer amounts are positive
-  - From/To aren't the same account
 - Add effective date to transfers (for when the transfer is recorded now, but it's related to something from the past)
 - Add metadata to accounts and transfers - json column?
 - Better primary keys - UUIDs? ULIDs? with prefixes or not? ideally monotonic
