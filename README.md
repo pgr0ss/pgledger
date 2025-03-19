@@ -14,11 +14,11 @@ select id from pgledger_create_account('account_2'); -- save this as account_2_i
 Create transfers:
 
 ```sql
-	select * from pgledger_create_transfer($account_1_id, $account_2_id, 12.34);
-	select * from pgledger_create_transfer($account_1_id, $account_2_id, 56.78);
+select * from pgledger_create_transfer($account_1_id, $account_2_id, 12.34);
+select * from pgledger_create_transfer($account_1_id, $account_2_id, 56.78);
 
-	select * from pgledger_create_transfer(41, 42, 12.34);
-	select * from pgledger_create_transfer(41, 42, 56.78);
+select * from pgledger_create_transfer(41, 42, 12.34);
+select * from pgledger_create_transfer(41, 42, 56.78);
 ```
 
 See updated balances:
