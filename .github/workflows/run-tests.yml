@@ -22,7 +22,7 @@ jobs:
           cache-dependency-path: "test/go.sum"
 
       - name: Start Docker Compose
-        run: docker-compose up --wait
+        run: docker compose up --wait
 
       - name: Run Go tests
         run: just --timestamp check
