@@ -13,20 +13,20 @@ dbload:
 dbreset: dbclean dbload
 
 clean:
-  cd test && go clean -testcache
+  cd go && go clean -testcache
 
 test:
-  cd test && go test -v
+  cd go && go test -v ./...
 
 benchmark:
-  cd test && go test -bench=. -benchtime=10s
+  cd go/test && go test -bench=. -benchtime=10s
 
 lint: deadcode modernize
 
 deadcode:
   #!/usr/bin/env bash
   set -euo pipefail
-  out=$(cd test && go tool deadcode -test ./...)
+  out=$(cd go && go tool deadcode -test ./...)
   echo "$out"
   if [[ $? != 0 ]]; then
     exit $?
@@ -38,6 +38,6 @@ deadcode:
   fi
 
 modernize:
-  cd test && go tool modernize -test ./...
+  cd go && go tool modernize -test ./...
 
 check: dbreset dbload clean test lint
