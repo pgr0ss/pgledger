@@ -21,6 +21,9 @@ test:
 benchmark:
   cd go/test && go test -bench=. -benchtime=10s
 
+performance_check:
+  cd go && go run performance_check.go
+
 lint: deadcode modernize
 
 deadcode:
