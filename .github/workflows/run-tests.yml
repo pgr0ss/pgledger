@@ -22,8 +22,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: "test/go.mod"
-          cache-dependency-path: "test/go.sum"
+          go-version-file: "go/go.mod"
+          cache-dependency-path: "go/go.sum"
 
       - name: Start Docker Compose
         run: docker compose up --wait
@@ -34,6 +34,6 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          working-directory: test
+          working-directory: go
           version: latest
           args: --timeout 2m --verbose
