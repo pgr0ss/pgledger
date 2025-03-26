@@ -69,7 +69,7 @@ func Must1[T any](obj T, err error) T {
 }
 
 func createAccount(ctx context.Context, conn *pgxpool.Pool) string {
-	rows := Must1(conn.Query(ctx, "select id from pgledger_create_account('acct')"))
+	rows := Must1(conn.Query(ctx, "select id from pgledger_create_account('acct', 'USD')"))
 	return Must1(pgx.CollectExactlyOneRow(rows, pgx.RowTo[string]))
 }
 

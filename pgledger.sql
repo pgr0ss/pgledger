@@ -1,6 +1,7 @@
 CREATE TABLE pgledger_accounts (
     id BIGSERIAL PRIMARY KEY,
     name TEXT NOT NULL,
+    currency TEXT NOT NULL,
     balance NUMERIC NOT NULL DEFAULT 0,
     version BIGINT NOT NULL DEFAULT 0,
     allow_negative_balance BOOLEAN NOT NULL,
@@ -35,36 +36,37 @@ CREATE TABLE pgledger_entries (
 CREATE INDEX ON pgledger_entries(account_id);
 CREATE INDEX ON pgledger_entries(transfer_id);
 
-CREATE OR REPLACE FUNCTION pgledger_add_account(name_param TEXT) RETURNS TABLE(id BIGINT, name TEXT, balance NUMERIC) AS $$
+CREATE OR REPLACE FUNCTION pgledger_add_account(name_param TEXT, currency_param TEXT) RETURNS TABLE(id BIGINT, name TEXT, currency TEXT, balance NUMERIC) AS $$
 BEGIN
     RETURN QUERY
-    INSERT INTO pgledger_accounts (name, allow_negative_balance, allow_positive_balance, created_at, updated_at)
-    VALUES (name_param, TRUE, TRUE, now(), now())
-    RETURNING pgledger_accounts.id, pgledger_accounts.name, pgledger_accounts.balance;
+    INSERT INTO pgledger_accounts (name, currency, allow_negative_balance, allow_positive_balance, created_at, updated_at)
+    VALUES (name_param, currency_param, TRUE, TRUE, now(), now())
+    RETURNING pgledger_accounts.id, pgledger_accounts.name, pgledger_accounts.currency, pgledger_accounts.balance;
 END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION pgledger_create_account(
     name_param TEXT,
+    currency_param TEXT,
     allow_negative_balance_param BOOLEAN DEFAULT TRUE,
     allow_positive_balance_param BOOLEAN DEFAULT TRUE
 )
-RETURNS TABLE(id BIGINT, name TEXT, balance NUMERIC, version BIGINT, allow_negative_balance BOOLEAN, allow_positive_balance BOOLEAN, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ) AS $$
+RETURNS TABLE(id BIGINT, name TEXT, currency TEXT, balance NUMERIC, version BIGINT, allow_negative_balance BOOLEAN, allow_positive_balance BOOLEAN, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ) AS $$
 BEGIN
     RETURN QUERY
-    INSERT INTO pgledger_accounts (name, allow_negative_balance, allow_positive_balance, created_at, updated_at)
-    VALUES (name_param, allow_negative_balance_param, allow_positive_balance_param, now(), now())
-    RETURNING pgledger_accounts.id, pgledger_accounts.name, pgledger_accounts.balance, pgledger_accounts.version,
+    INSERT INTO pgledger_accounts (name, currency, allow_negative_balance, allow_positive_balance, created_at, updated_at)
+    VALUES (name_param, currency_param, allow_negative_balance_param, allow_positive_balance_param, now(), now())
+    RETURNING pgledger_accounts.id, pgledger_accounts.name, pgledger_accounts.currency, pgledger_accounts.balance, pgledger_accounts.version,
               pgledger_accounts.allow_negative_balance, pgledger_accounts.allow_positive_balance,
               pgledger_accounts.created_at, pgledger_accounts.updated_at;
 END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION pgledger_get_account(id_param BIGINT)
-RETURNS TABLE(id BIGINT, name TEXT, balance NUMERIC, version BIGINT, allow_negative_balance BOOLEAN, allow_positive_balance BOOLEAN, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ) AS $$
+RETURNS TABLE(id BIGINT, name TEXT, currency TEXT, balance NUMERIC, version BIGINT, allow_negative_balance BOOLEAN, allow_positive_balance BOOLEAN, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ) AS $$
 BEGIN
     RETURN QUERY
-    SELECT pgledger_accounts.id, pgledger_accounts.name, pgledger_accounts.balance, pgledger_accounts.version,
+    SELECT pgledger_accounts.id, pgledger_accounts.name, pgledger_accounts.currency, pgledger_accounts.balance, pgledger_accounts.version,
            pgledger_accounts.allow_negative_balance, pgledger_accounts.allow_positive_balance,
            pgledger_accounts.created_at, pgledger_accounts.updated_at
     FROM pgledger_accounts
@@ -153,6 +155,11 @@ BEGIN
 
     -- Check balance constraints for the destination account
     PERFORM pgledger_check_account_balance_constraints(to_account);
+
+    -- Check that currencies match
+    IF from_account.currency != to_account.currency THEN
+        RAISE EXCEPTION 'Cannot transfer between different currencies (% and %)', from_account.currency, to_account.currency;
+    END IF;
 
     -- Create transfer record
     INSERT INTO pgledger_transfers (from_account_id, to_account_id, amount, created_at)

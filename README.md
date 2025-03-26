@@ -9,8 +9,8 @@ The implementation is currently in a single file: [pgledger.sql](/pgledger.sql).
 Set up your accounts:
 
 ```sql
-select id from pgledger_create_account('account_1'); -- save this as account_1_id
-select id from pgledger_create_account('account_2'); -- save this as account_2_id
+select id from pgledger_create_account('account_1', 'USD'); -- save this as account_1_id
+select id from pgledger_create_account('account_2', 'USD'); -- save this as account_2_id
 ```
 
 Create transfers:

@@ -11,10 +11,10 @@ func BenchmarkTransfers(b *testing.B) {
 	conn := dbconn(b)
 	ctx := context.Background()
 
-	account1, err := createAccount(ctx, conn, "benchmark account 1")
+	account1, err := createAccount(ctx, conn, "benchmark account 1", "USD")
 	require.NoError(b, err)
 
-	account2, err := createAccount(ctx, conn, "benchmark account 2")
+	account2, err := createAccount(ctx, conn, "benchmark account 2", "USD")
 	require.NoError(b, err)
 
 	for b.Loop() {
