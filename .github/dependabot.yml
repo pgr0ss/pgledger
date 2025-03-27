@@ -24,11 +24,11 @@ updates:
       - "dependencies"
       - "github-actions"
 
-  # Enable version updates for Docker
-  - package-ecosystem: "docker"
+  # Enable version updates for Docker Compose
+  - package-ecosystem: "docker-compose"
     directory: "/"
     schedule:
-      interval: "monthly"
+      interval: "weekly"
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
