@@ -1,14 +1,12 @@
 package test
 
 import (
-	"context"
 	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,8 +14,7 @@ func TestAddAccount(t *testing.T) {
 	conn := dbconn(t)
 	ctx := t.Context()
 
-	account, err := createAccount(ctx, conn, "account 1", "USD")
-	assert.NoError(t, err)
+	account := createAccount(ctx, t, conn, "account 1", "USD")
 
 	assert.Regexp(t, "\\d+", account.ID)
 	assert.Equal(t, "account 1", account.Name)
@@ -38,17 +35,13 @@ func TestAccountsThatCannotBeNegative(t *testing.T) {
 	account1ID, err := pgx.CollectExactlyOneRow(rows, pgx.RowTo[string])
 	assert.NoError(t, err)
 
-	account2, err := createAccount(ctx, conn, "account 2", "USD")
-	assert.NoError(t, err)
+	account2 := createAccount(ctx, t, conn, "account 2", "USD")
 
-	_, err = createTransfer(ctx, conn, account1ID, account2.ID, "12.34")
+	_, err = createTransferReturnErr(ctx, conn, account1ID, account2.ID, "12.34")
 	assert.ErrorContains(t, err, fmt.Sprintf("Account (id=%s, name=%s) does not allow negative balance", account1ID, "positive-only"))
 
-	foundAccount1, err := getAccount(ctx, conn, account1ID)
-	assert.NoError(t, err)
-
-	foundAccount2, err := getAccount(ctx, conn, account2.ID)
-	assert.NoError(t, err)
+	foundAccount1 := getAccount(ctx, t, conn, account1ID)
+	foundAccount2 := getAccount(ctx, t, conn, account2.ID)
 
 	assert.Equal(t, "0", foundAccount1.Balance)
 	assert.Equal(t, "0", foundAccount2.Balance)
@@ -64,17 +57,13 @@ func TestAccountsThatCannotBePositive(t *testing.T) {
 	account1ID, err := pgx.CollectExactlyOneRow(rows, pgx.RowTo[string])
 	assert.NoError(t, err)
 
-	account2, err := createAccount(ctx, conn, "account 2", "USD")
-	assert.NoError(t, err)
+	account2 := createAccount(ctx, t, conn, "account 2", "USD")
 
-	_, err = createTransfer(ctx, conn, account2.ID, account1ID, "12.34")
+	_, err = createTransferReturnErr(ctx, conn, account2.ID, account1ID, "12.34")
 	assert.ErrorContains(t, err, fmt.Sprintf("Account (id=%s, name=%s) does not allow positive balance", account1ID, "negative-only"))
 
-	foundAccount1, err := getAccount(ctx, conn, account1ID)
-	assert.NoError(t, err)
-
-	foundAccount2, err := getAccount(ctx, conn, account2.ID)
-	assert.NoError(t, err)
+	foundAccount1 := getAccount(ctx, t, conn, account1ID)
+	foundAccount2 := getAccount(ctx, t, conn, account2.ID)
 
 	assert.Equal(t, "0", foundAccount1.Balance)
 	assert.Equal(t, "0", foundAccount2.Balance)
@@ -84,14 +73,10 @@ func TestCreateTransfer(t *testing.T) {
 	conn := dbconn(t)
 	ctx := t.Context()
 
-	account1, err := createAccount(ctx, conn, "account 1", "USD")
-	assert.NoError(t, err)
+	account1 := createAccount(ctx, t, conn, "account 1", "USD")
+	account2 := createAccount(ctx, t, conn, "account 2", "USD")
 
-	account2, err := createAccount(ctx, conn, "account 2", "USD")
-	assert.NoError(t, err)
-
-	transfer, err := createTransfer(ctx, conn, account1.ID, account2.ID, "12.34")
-	assert.NoError(t, err)
+	transfer := createTransfer(ctx, t, conn, account1.ID, account2.ID, "12.34")
 
 	assert.Regexp(t, "\\d+", transfer.ID)
 	assert.Equal(t, account1.ID, transfer.FromAccountID)
@@ -99,19 +84,15 @@ func TestCreateTransfer(t *testing.T) {
 	assert.Equal(t, "12.34", transfer.Amount)
 	assert.WithinDuration(t, time.Now(), transfer.CreatedAt, time.Minute)
 
-	foundTransfer, err := getTransfer(ctx, conn, transfer.ID)
-	assert.NoError(t, err)
+	foundTransfer := getTransfer(ctx, t, conn, transfer.ID)
 	assert.Regexp(t, transfer.ID, foundTransfer.ID)
 	assert.Equal(t, account1.ID, foundTransfer.FromAccountID)
 	assert.Equal(t, account2.ID, foundTransfer.ToAccountID)
 	assert.Equal(t, "12.34", foundTransfer.Amount)
 	assert.WithinDuration(t, time.Now(), foundTransfer.CreatedAt, time.Minute)
 
-	foundAccount1, err := getAccount(ctx, conn, account1.ID)
-	assert.NoError(t, err)
-
-	foundAccount2, err := getAccount(ctx, conn, account2.ID)
-	assert.NoError(t, err)
+	foundAccount1 := getAccount(ctx, t, conn, account1.ID)
+	foundAccount2 := getAccount(ctx, t, conn, account2.ID)
 
 	assert.Equal(t, "-12.34", foundAccount1.Balance)
 	assert.Equal(t, "12.34", foundAccount2.Balance)
@@ -125,30 +106,20 @@ func TestCreateMultipleTransfers(t *testing.T) {
 	conn := dbconn(t)
 	ctx := t.Context()
 
-	account1, err := createAccount(ctx, conn, "account 1", "USD")
-	assert.NoError(t, err)
+	account1 := createAccount(ctx, t, conn, "account 1", "USD")
+	account2 := createAccount(ctx, t, conn, "account 2", "USD")
+	account3 := createAccount(ctx, t, conn, "account 3", "USD")
 
-	account2, err := createAccount(ctx, conn, "account 2", "USD")
-	assert.NoError(t, err)
-
-	account3, err := createAccount(ctx, conn, "account 3", "USD")
-	assert.NoError(t, err)
-
-	_, err = conn.Exec(ctx, fmt.Sprintf(`
+	_, err := conn.Exec(ctx, fmt.Sprintf(`
 		select * from pgledger_create_transfer('%[1]s', '%[2]s', '10');
 		select * from pgledger_create_transfer('%[2]s', '%[3]s', '20');
 		select * from pgledger_create_transfer('%[3]s', '%[1]s', '50');
 		`, account1.ID, account2.ID, account3.ID))
 	assert.NoError(t, err)
 
-	foundAccount1, err := getAccount(ctx, conn, account1.ID)
-	assert.NoError(t, err)
-
-	foundAccount2, err := getAccount(ctx, conn, account2.ID)
-	assert.NoError(t, err)
-
-	foundAccount3, err := getAccount(ctx, conn, account3.ID)
-	assert.NoError(t, err)
+	foundAccount1 := getAccount(ctx, t, conn, account1.ID)
+	foundAccount2 := getAccount(ctx, t, conn, account2.ID)
+	foundAccount3 := getAccount(ctx, t, conn, account3.ID)
 
 	assert.Equal(t, "40", foundAccount1.Balance)
 	assert.Equal(t, "-10", foundAccount2.Balance)
@@ -163,8 +134,7 @@ func TestCreateMultipleTransfersRollbackOnFailure(t *testing.T) {
 	conn := dbconn(t)
 	ctx := t.Context()
 
-	account1, err := createAccount(ctx, conn, "account 1", "USD")
-	assert.NoError(t, err)
+	account1 := createAccount(ctx, t, conn, "account 1", "USD")
 
 	rows, err := conn.Query(ctx, "select id from pgledger_create_account('positive-only', 'USD', allow_negative_balance_param => false)")
 	assert.NoError(t, err)
@@ -181,11 +151,8 @@ func TestCreateMultipleTransfersRollbackOnFailure(t *testing.T) {
 		`, account1.ID, positiveOnlyAccountID))
 	assert.ErrorContains(t, err, "does not allow negative balance")
 
-	foundAccount1, err := getAccount(ctx, conn, account1.ID)
-	assert.NoError(t, err)
-
-	foundAccount2, err := getAccount(ctx, conn, positiveOnlyAccountID)
-	assert.NoError(t, err)
+	foundAccount1 := getAccount(ctx, t, conn, account1.ID)
+	foundAccount2 := getAccount(ctx, t, conn, positiveOnlyAccountID)
 
 	assert.Equal(t, "0", foundAccount1.Balance)
 	assert.Equal(t, "0", foundAccount2.Balance)
@@ -198,13 +165,12 @@ func TestTransferWithInvalidAccountID(t *testing.T) {
 	conn := dbconn(t)
 	ctx := t.Context()
 
-	account1, err := createAccount(ctx, conn, "account 1", "USD")
-	assert.NoError(t, err)
+	account1 := createAccount(ctx, t, conn, "account 1", "USD")
 
-	_, err = createTransfer(ctx, conn, account1.ID, "999", "12.34")
+	_, err := createTransferReturnErr(ctx, conn, account1.ID, "999", "12.34")
 	assert.ErrorContains(t, err, "violates foreign key constraint")
 
-	_, err = createTransfer(ctx, conn, "999", account1.ID, "12.34")
+	_, err = createTransferReturnErr(ctx, conn, "999", account1.ID, "12.34")
 	assert.ErrorContains(t, err, "violates foreign key constraint")
 }
 
@@ -212,23 +178,14 @@ func TestEntries(t *testing.T) {
 	conn := dbconn(t)
 	ctx := t.Context()
 
-	account1, err := createAccount(ctx, conn, "account 1", "USD")
-	assert.NoError(t, err)
+	account1 := createAccount(ctx, t, conn, "account 1", "USD")
+	account2 := createAccount(ctx, t, conn, "account 2", "USD")
 
-	account2, err := createAccount(ctx, conn, "account 2", "USD")
-	assert.NoError(t, err)
+	t1 := createTransfer(ctx, t, conn, account1.ID, account2.ID, "5")
+	t2 := createTransfer(ctx, t, conn, account1.ID, account2.ID, "10")
+	t3 := createTransfer(ctx, t, conn, account2.ID, account1.ID, "20")
 
-	t1, err := createTransfer(ctx, conn, account1.ID, account2.ID, "5")
-	assert.NoError(t, err)
-
-	t2, err := createTransfer(ctx, conn, account1.ID, account2.ID, "10")
-	assert.NoError(t, err)
-
-	t3, err := createTransfer(ctx, conn, account2.ID, account1.ID, "20")
-	assert.NoError(t, err)
-
-	entries, err := getEntries(ctx, conn, account1.ID)
-	assert.NoError(t, err)
+	entries := getEntries(ctx, t, conn, account1.ID)
 
 	assert.Len(t, entries, 3)
 
@@ -253,8 +210,7 @@ func TestEntries(t *testing.T) {
 	assert.Equal(t, 3, entries[2].AccountVersion)
 	assert.WithinDuration(t, time.Now(), entries[2].CreatedAt, time.Minute)
 
-	entries, err = getEntries(ctx, conn, account2.ID)
-	assert.NoError(t, err)
+	entries = getEntries(ctx, t, conn, account2.ID)
 
 	assert.Len(t, entries, 3)
 
@@ -284,16 +240,13 @@ func TestTransferAmountsArePositive(t *testing.T) {
 	conn := dbconn(t)
 	ctx := t.Context()
 
-	account1, err := createAccount(ctx, conn, "account 1", "USD")
-	assert.NoError(t, err)
+	account1 := createAccount(ctx, t, conn, "account 1", "USD")
+	account2 := createAccount(ctx, t, conn, "account 2", "USD")
 
-	account2, err := createAccount(ctx, conn, "account 2", "USD")
-	assert.NoError(t, err)
-
-	_, err = createTransfer(ctx, conn, account1.ID, account2.ID, "0")
+	_, err := createTransferReturnErr(ctx, conn, account1.ID, account2.ID, "0")
 	assert.ErrorContains(t, err, "Amount (0) must be positive")
 
-	_, err = createTransfer(ctx, conn, account1.ID, account2.ID, "-0.01")
+	_, err = createTransferReturnErr(ctx, conn, account1.ID, account2.ID, "-0.01")
 	assert.ErrorContains(t, err, "Amount (-0.01) must be positive")
 }
 
@@ -302,21 +255,15 @@ func TestCannotTransferBetweenDifferentCurrencies(t *testing.T) {
 	ctx := t.Context()
 
 	// Create two accounts with different currencies
-	accountUSD, err := createAccount(ctx, conn, "USD account", "USD")
-	assert.NoError(t, err)
+	accountUSD := createAccount(ctx, t, conn, "USD account", "USD")
+	accountEUR := createAccount(ctx, t, conn, "EUR account", "EUR")
 
-	accountEUR, err := createAccount(ctx, conn, "EUR account", "EUR")
-	assert.NoError(t, err)
-
-	_, err = createTransfer(ctx, conn, accountUSD.ID, accountEUR.ID, "10.00")
+	_, err := createTransferReturnErr(ctx, conn, accountUSD.ID, accountEUR.ID, "10.00")
 	assert.ErrorContains(t, err, "Cannot transfer between different currencies (USD and EUR)")
 
 	// Verify account balances remain unchanged
-	foundAccountUSD, err := getAccount(ctx, conn, accountUSD.ID)
-	assert.NoError(t, err)
-
-	foundAccountEUR, err := getAccount(ctx, conn, accountEUR.ID)
-	assert.NoError(t, err)
+	foundAccountUSD := getAccount(ctx, t, conn, accountUSD.ID)
+	foundAccountEUR := getAccount(ctx, t, conn, accountEUR.ID)
 
 	assert.Equal(t, "0", foundAccountUSD.Balance)
 	assert.Equal(t, "0", foundAccountEUR.Balance)
@@ -326,10 +273,9 @@ func TestTransfersUseDifferentAccounts(t *testing.T) {
 	conn := dbconn(t)
 	ctx := t.Context()
 
-	account1, err := createAccount(ctx, conn, "account 1", "USD")
-	assert.NoError(t, err)
+	account1 := createAccount(ctx, t, conn, "account 1", "USD")
 
-	_, err = createTransfer(ctx, conn, account1.ID, account1.ID, "10")
+	_, err := createTransferReturnErr(ctx, conn, account1.ID, account1.ID, "10")
 	assert.ErrorContains(t, err, fmt.Sprintf("Cannot transfer to the same account (id=%s)", account1.ID))
 }
 
@@ -337,11 +283,8 @@ func TestConcurrency(t *testing.T) {
 	conn := dbconn(t)
 	ctx := t.Context()
 
-	account1, err := createAccount(ctx, conn, "account 1", "USD")
-	assert.NoError(t, err)
-
-	account2, err := createAccount(ctx, conn, "account 2", "USD")
-	assert.NoError(t, err)
+	account1 := createAccount(ctx, t, conn, "account 1", "USD")
+	account2 := createAccount(ctx, t, conn, "account 2", "USD")
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -349,135 +292,23 @@ func TestConcurrency(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for range 500 {
-			_, err1 := createTransfer(ctx, conn, account1.ID, account2.ID, "100")
-			assert.NoError(t, err1)
-
-			_, err1 = createTransfer(ctx, conn, account2.ID, account1.ID, "100")
-			assert.NoError(t, err1)
+			_ = createTransfer(ctx, t, conn, account1.ID, account2.ID, "100")
 		}
 	}()
 
 	go func() {
 		defer wg.Done()
 		for range 500 {
-			_, err2 := createTransfer(ctx, conn, account2.ID, account1.ID, "100")
-			assert.NoError(t, err2)
-
-			_, err2 = createTransfer(ctx, conn, account1.ID, account2.ID, "100")
-			assert.NoError(t, err2)
+			_ = createTransfer(ctx, t, conn, account2.ID, account1.ID, "100")
 		}
 	}()
 
 	// Wait for all goroutines to complete
 	wg.Wait()
 
-	foundAccount1, err := getAccount(ctx, conn, account1.ID)
-	assert.NoError(t, err)
-
-	foundAccount2, err := getAccount(ctx, conn, account2.ID)
-	assert.NoError(t, err)
+	foundAccount1 := getAccount(ctx, t, conn, account1.ID)
+	foundAccount2 := getAccount(ctx, t, conn, account2.ID)
 
 	assert.Equal(t, "0", foundAccount1.Balance)
 	assert.Equal(t, "0", foundAccount2.Balance)
-}
-
-type Account struct {
-	ID                   string
-	Name                 string
-	Currency             string
-	Balance              string
-	Version              int
-	AllowNegativeBalance bool
-	AllowPositiveBalance bool
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
-}
-
-type Transfer struct {
-	ID            string
-	FromAccountID string
-	ToAccountID   string
-	Amount        string
-	CreatedAt     time.Time
-}
-
-type Entry struct {
-	ID                     string
-	AccountID              string
-	TransferID             string
-	Amount                 string
-	AccountPreviousBalance string
-	AccountCurrentBalance  string
-	AccountVersion         int
-	CreatedAt              time.Time
-}
-
-func createAccount(ctx context.Context, conn *pgxpool.Pool, name string, currency string) (*Account, error) {
-	rows, err := conn.Query(ctx, "select * from pgledger_create_account($1, $2)", name, currency)
-	if err != nil {
-		return nil, err
-	}
-
-	account, err := pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[Account])
-	if err != nil {
-		return nil, err
-	}
-
-	return account, nil
-}
-
-func getAccount(ctx context.Context, conn *pgxpool.Pool, id string) (*Account, error) {
-	rows, err := conn.Query(ctx, "select * from pgledger_get_account($1)", id)
-	if err != nil {
-		return nil, err
-	}
-
-	account, err := pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[Account])
-	if err != nil {
-		return nil, err
-	}
-
-	return account, nil
-}
-
-func getTransfer(ctx context.Context, conn *pgxpool.Pool, id string) (*Transfer, error) {
-	rows, err := conn.Query(ctx, "select * from pgledger_get_transfer($1)", id)
-	if err != nil {
-		return nil, err
-	}
-
-	transfer, err := pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[Transfer])
-	if err != nil {
-		return nil, err
-	}
-
-	return transfer, nil
-}
-
-func createTransfer(ctx context.Context, conn *pgxpool.Pool, fromAccountID, toAccountID, amount string) (*Transfer, error) {
-	rows, err := conn.Query(ctx, "select * from pgledger_create_transfer($1, $2, $3)", fromAccountID, toAccountID, amount)
-	if err != nil {
-		return nil, err
-	}
-
-	transfer, err := pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[Transfer])
-	if err != nil {
-		return nil, err
-	}
-
-	return transfer, nil
-}
-
-func getEntries(ctx context.Context, conn *pgxpool.Pool, accountID string) ([]Entry, error) {
-	rows, err := conn.Query(ctx, "select * from pgledger_entries where account_id = $1 order by id", accountID)
-	if err != nil {
-		return nil, err
-	}
-
-	entries, err := pgx.CollectRows(rows, pgx.RowToStructByName[Entry])
-	if err != nil {
-		return nil, err
-	}
-
-	return entries, nil
 }
