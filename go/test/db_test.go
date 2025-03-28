@@ -110,11 +110,12 @@ func TestCreateMultipleTransfers(t *testing.T) {
 	account2 := createAccount(ctx, t, conn, "account 2", "USD")
 	account3 := createAccount(ctx, t, conn, "account 3", "USD")
 
-	_, err := conn.Exec(ctx, fmt.Sprintf(`
-		select * from pgledger_create_transfer('%[1]s', '%[2]s', '10');
-		select * from pgledger_create_transfer('%[2]s', '%[3]s', '20');
-		select * from pgledger_create_transfer('%[3]s', '%[1]s', '50');
-		`, account1.ID, account2.ID, account3.ID))
+	_, err := conn.Exec(ctx, `
+		select * from pgledger_create_transfers(
+			($1, $2, '10'),
+			($2, $3, '20'),
+			($3, $1, '50'))`,
+		account1.ID, account2.ID, account3.ID)
 	assert.NoError(t, err)
 
 	foundAccount1 := getAccount(ctx, t, conn, account1.ID)
@@ -128,6 +129,63 @@ func TestCreateMultipleTransfers(t *testing.T) {
 	assert.Equal(t, 2, foundAccount1.Version)
 	assert.Equal(t, 2, foundAccount2.Version)
 	assert.Equal(t, 2, foundAccount3.Version)
+}
+
+func TestMultipleTransfersRollsBackIfOneIsBad(t *testing.T) {
+	conn := dbconn(t)
+	ctx := t.Context()
+
+	account1 := createAccount(ctx, t, conn, "account 1", "USD")
+	account2 := createAccount(ctx, t, conn, "account 2", "USD")
+
+	rows, err := conn.Query(ctx, "select id from pgledger_create_account('negative-only', 'USD', allow_positive_balance_param => false)")
+	assert.NoError(t, err)
+
+	account3ID, err := pgx.CollectExactlyOneRow(rows, pgx.RowTo[string])
+	assert.NoError(t, err)
+
+	_, err = conn.Exec(ctx, `
+		select * from pgledger_create_transfers(
+			($1, $2, '10'),
+			($2, $3, '20'),
+			($3, $1, '50'))`,
+		account1.ID, account2.ID, account3ID)
+	assert.ErrorContains(t, err, fmt.Sprintf("Account (id=%s, name=%s) does not allow positive balance", account3ID, "negative-only"))
+
+	foundAccount1 := getAccount(ctx, t, conn, account1.ID)
+	foundAccount2 := getAccount(ctx, t, conn, account2.ID)
+	foundAccount3 := getAccount(ctx, t, conn, account3ID)
+
+	assert.Equal(t, "0", foundAccount1.Balance)
+	assert.Equal(t, "0", foundAccount2.Balance)
+	assert.Equal(t, "0", foundAccount3.Balance)
+
+	assert.Equal(t, 0, foundAccount1.Version)
+	assert.Equal(t, 0, foundAccount2.Version)
+	assert.Equal(t, 0, foundAccount3.Version)
+}
+
+func TestTransfersRollbackIfTransctionRollback(t *testing.T) {
+	conn := dbconn(t)
+	ctx := t.Context()
+
+	account1 := createAccount(ctx, t, conn, "account 1", "USD")
+	account2 := createAccount(ctx, t, conn, "account 2", "USD")
+
+	tx, err := conn.Begin(ctx)
+	assert.NoError(t, err)
+
+	_, err = tx.Exec(ctx, "select * from pgledger_create_transfers(($1, $2, '10'))", account1.ID, account2.ID)
+	assert.NoError(t, err)
+
+	_, err = tx.Exec(ctx, "select 1/0")
+	assert.ErrorContains(t, err, "division by zero")
+
+	err = tx.Commit(ctx)
+	assert.ErrorContains(t, err, "rollback")
+
+	assert.Equal(t, "0", getAccount(ctx, t, conn, account1.ID).Balance)
+	assert.Equal(t, "0", getAccount(ctx, t, conn, account2.ID).Balance)
 }
 
 func TestCreateMultipleTransfersRollbackOnFailure(t *testing.T) {
@@ -337,4 +395,48 @@ func TestConcurrency(t *testing.T) {
 
 	assert.Equal(t, "0", foundAccount1.Balance)
 	assert.Equal(t, "0", foundAccount2.Balance)
+}
+
+func TestConcurrencyWithCurrencyExchange(t *testing.T) {
+	conn := dbconn(t)
+	ctx := t.Context()
+
+	// Create two accounts with different currencies
+	userUSD := createAccount(ctx, t, conn, "user.USD", "USD")
+	userEUR := createAccount(ctx, t, conn, "user.EUR", "EUR")
+
+	// Liquidity accounts for the conversion
+	liquidityUSD := createAccount(ctx, t, conn, "liquidity.USD", "USD")
+	liquidityEUR := createAccount(ctx, t, conn, "liquidity.EUR", "EUR")
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		for range 500 {
+			_, err := conn.Exec(ctx,
+				"select * from pgledger_create_transfers(($1, $2, '10.00'), ($3, $4, '9.26'))",
+				userUSD.ID, liquidityUSD.ID, liquidityEUR.ID, userEUR.ID)
+			assert.NoError(t, err)
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		for range 500 {
+			_, err := conn.Exec(ctx,
+				"select * from pgledger_create_transfers(($1, $2, '9.26'), ($3, $4, '10.00'))",
+				userEUR.ID, liquidityEUR.ID, liquidityUSD.ID, userUSD.ID)
+			assert.NoError(t, err)
+		}
+	}()
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+
+	assert.Equal(t, "0", getAccount(ctx, t, conn, userUSD.ID).Balance)
+	assert.Equal(t, "0", getAccount(ctx, t, conn, userEUR.ID).Balance)
+	assert.Equal(t, "0", getAccount(ctx, t, conn, liquidityUSD.ID).Balance)
+	assert.Equal(t, "0", getAccount(ctx, t, conn, liquidityEUR.ID).Balance)
 }

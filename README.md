@@ -42,9 +42,34 @@ select * from pgledger_entries where account_id = $account_2_id;
 (2 rows)
 ```
 
+### Currencies
+
+Each account is single currency. If you want to maintain balances in multiple currencies, use multiple accounts.
+
+An exchange between two currencies will use 4 accounts, including 2 system or liquidity accounts (one for each currency). That way, the total debits and credits for each currency still add up to 0. For example, say a user has a USD and an EUR account:
+
+```sql
+select id from pgledger_create_account('user1.USD', 'USD');
+select id from pgledger_create_account('user1.EUR', 'EUR');
+```
+
+You'll also need system or liquidity accounts for each currency:
+
+```sql
+select id from pgledger_create_account('liquidity.USD', 'USD');
+select id from pgledger_create_account('liquidity.EUR', 'EUR');
+```
+
+Now, to transfer between the user's USD and EUR accounts, you create 2 simultaneous transfers (totalling 4 entries, 2 in each currency). You can use the `pgledger_create_transfers` function to create multiple transfers in a single call:
+
+```sql
+select * from pgledger_create_transfers(($user1_usd, $liquidity_usd, '10.00'), ($liquidity_eur, $user1_eur, '9.26'));
+```
+
 ## TODO
 
 - Add effective date to transfers (for when the transfer is recorded now, but it's related to something from the past)
+- Make create_transfers function return account balances as well
 - Add metadata to accounts and transfers - json column?
 - Better primary keys - UUIDs? ULIDs? with prefixes or not? ideally monotonic
 - Query via versioned views
@@ -53,13 +78,8 @@ select * from pgledger_entries where account_id = $account_2_id;
   - Later, add `pgledger_transfers_v2`
   - Rename tables to be internal? `pgledger_internal_transfers`
   - Add version to functions? `pgledger_create_transfer_v1`
-- Add currency to accounts - don’t let transfers cross currency boundaries
-- How to do currency conversions with 4 accounts?
-  - With 2 separate transfers easy to get deadlocks if they are done in reverse - usd to eur and eur to usd
-  - Write a test for concurrency with multiple currency conversions going in opposite directions
-  - Do we need a function which is just for conversions?
-  - Or a `create_transfers` function which takes multiple transfers, locks them all, and then executes them?
 - Structure sql as a series of numbered migrations (e.g. pgledger_01.sql) so new versions can be applied to existing databases
   - Also dump an overall pgledger.sql so it's easier to review in one place
 - Add postgres documentation comments?
 - Show how name can be used like ltree: https://www.postgresql.org/docs/current/ltree.html
+  - Allow create_transfers to take account name instead of id? Or a separate function for this?

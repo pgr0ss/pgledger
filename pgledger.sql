@@ -103,78 +103,114 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Define a composite type for transfer requests
+CREATE TYPE transfer_request AS (
+    from_account_id BIGINT,
+    to_account_id BIGINT,
+    amount NUMERIC
+);
+
 CREATE OR REPLACE FUNCTION pgledger_create_transfer(from_account_id_param BIGINT, to_account_id_param BIGINT, amount_param NUMERIC) RETURNS TABLE(id BIGINT, from_account_id BIGINT, to_account_id BIGINT, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
+BEGIN
+    -- Simply call pgledger_create_transfers with a single transfer
+    RETURN QUERY
+    SELECT * FROM pgledger_create_transfers(
+        ROW(from_account_id_param, to_account_id_param, amount_param)::transfer_request
+    );
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to create multiple transfers in a single transaction
+CREATE OR REPLACE FUNCTION pgledger_create_transfers(
+    VARIADIC transfers transfer_request[]
+) RETURNS TABLE(id BIGINT, from_account_id BIGINT, to_account_id BIGINT, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
 DECLARE
+    transfer transfer_request;
+    transfer_ids BIGINT[] := '{}';
     transfer_id BIGINT;
-    account_ids INT[] := ARRAY[
-        LEAST(from_account_id_param, to_account_id_param),
-        GREATEST(from_account_id_param, to_account_id_param)
-    ];
     from_account RECORD;
     to_account RECORD;
+    from_account_id_param BIGINT;
+    to_account_id_param BIGINT;
+    amount_param NUMERIC;
+    all_account_ids BIGINT[] := '{}';
 BEGIN
-    -- Preliminary checks
-    IF amount_param <= 0 THEN
-        RAISE EXCEPTION 'Amount (%) must be positive', amount_param;
-    END IF;
+    -- Collect all unique account IDs and sort them to prevent deadlocks
+    FOREACH transfer IN ARRAY transfers LOOP
+        all_account_ids := array_append(all_account_ids, transfer.from_account_id);
+        all_account_ids := array_append(all_account_ids, transfer.to_account_id);
+    END LOOP;
 
-    IF from_account_id_param = to_account_id_param THEN
-        RAISE EXCEPTION 'Cannot transfer to the same account (id=%)', from_account_id_param;
-    END IF;
+    -- Remove duplicates and sort
+    SELECT ARRAY(SELECT DISTINCT unnest FROM unnest(all_account_ids) ORDER BY unnest)
+    INTO all_account_ids;
 
-    -- Lock accounts in a consistent order to prevent deadlocks
-    -- Lock first account
-    PERFORM pgledger_accounts.id
-    FROM pgledger_accounts
-    WHERE pgledger_accounts.id = account_ids[1]
-    FOR UPDATE;
+    -- Lock all accounts in order
+    FOREACH from_account_id_param IN ARRAY all_account_ids LOOP
+        PERFORM pgledger_accounts.id
+        FROM pgledger_accounts
+        WHERE pgledger_accounts.id = from_account_id_param
+        FOR UPDATE;
+    END LOOP;
 
-    -- Lock second account
-    PERFORM pgledger_accounts.id
-    FROM pgledger_accounts
-    WHERE pgledger_accounts.id = account_ids[2]
-    FOR UPDATE;
+    -- Process each transfer
+    FOREACH transfer IN ARRAY transfers LOOP
+        from_account_id_param := transfer.from_account_id;
+        to_account_id_param := transfer.to_account_id;
+        amount_param := transfer.amount;
 
-    -- Update account balances
-    UPDATE pgledger_accounts
-    SET balance = balance - amount_param,
-        version = version + 1,
-        updated_at = now()
-    WHERE pgledger_accounts.id = from_account_id_param
-    RETURNING * INTO from_account;
+        -- Preliminary checks
+        IF amount_param <= 0 THEN
+            RAISE EXCEPTION 'Amount (%) must be positive', amount_param;
+        END IF;
 
-    -- Check balance constraints for the source account
-    PERFORM pgledger_check_account_balance_constraints(from_account);
+        IF from_account_id_param = to_account_id_param THEN
+            RAISE EXCEPTION 'Cannot transfer to the same account (id=%)', from_account_id_param;
+        END IF;
 
-    UPDATE pgledger_accounts
-    SET balance = balance + amount_param,
-        version = version + 1,
-        updated_at = now()
-    WHERE pgledger_accounts.id = to_account_id_param
-    RETURNING * INTO to_account;
+        -- Update account balances
+        UPDATE pgledger_accounts
+        SET balance = balance - amount_param,
+            version = version + 1,
+            updated_at = now()
+        WHERE pgledger_accounts.id = from_account_id_param
+        RETURNING * INTO from_account;
 
-    -- Check balance constraints for the destination account
-    PERFORM pgledger_check_account_balance_constraints(to_account);
+        -- Check balance constraints for the source account
+        PERFORM pgledger_check_account_balance_constraints(from_account);
 
-    -- Check that currencies match
-    IF from_account.currency != to_account.currency THEN
-        RAISE EXCEPTION 'Cannot transfer between different currencies (% and %)', from_account.currency, to_account.currency;
-    END IF;
+        UPDATE pgledger_accounts
+        SET balance = balance + amount_param,
+            version = version + 1,
+            updated_at = now()
+        WHERE pgledger_accounts.id = to_account_id_param
+        RETURNING * INTO to_account;
 
-    -- Create transfer record
-    INSERT INTO pgledger_transfers (from_account_id, to_account_id, amount, created_at)
-    VALUES (from_account_id_param, to_account_id_param, amount_param, now())
-    RETURNING pgledger_transfers.id INTO transfer_id;
+        -- Check balance constraints for the destination account
+        PERFORM pgledger_check_account_balance_constraints(to_account);
 
-    -- Create entry for the source account (negative amount)
-    INSERT INTO pgledger_entries (account_id, transfer_id, amount, account_previous_balance, account_current_balance, account_version, created_at)
-    VALUES (from_account_id_param, transfer_id, -amount_param, from_account.balance + amount_param, from_account.balance, from_account.version, now());
+        -- Check that currencies match
+        IF from_account.currency != to_account.currency THEN
+            RAISE EXCEPTION 'Cannot transfer between different currencies (% and %)', from_account.currency, to_account.currency;
+        END IF;
 
-    -- Create entry for the destination account (positive amount)
-    INSERT INTO pgledger_entries (account_id, transfer_id, amount, account_previous_balance, account_current_balance, account_version, created_at)
-    VALUES (to_account_id_param, transfer_id, amount_param, to_account.balance - amount_param, to_account.balance, to_account.version, now());
+        -- Create transfer record
+        INSERT INTO pgledger_transfers (from_account_id, to_account_id, amount, created_at)
+        VALUES (from_account_id_param, to_account_id_param, amount_param, now())
+        RETURNING pgledger_transfers.id INTO transfer_id;
 
-    -- Return the transfer details
+        transfer_ids := array_append(transfer_ids, transfer_id);
+
+        -- Create entry for the source account (negative amount)
+        INSERT INTO pgledger_entries (account_id, transfer_id, amount, account_previous_balance, account_current_balance, account_version, created_at)
+        VALUES (from_account_id_param, transfer_id, -amount_param, from_account.balance + amount_param, from_account.balance, from_account.version, now());
+
+        -- Create entry for the destination account (positive amount)
+        INSERT INTO pgledger_entries (account_id, transfer_id, amount, account_previous_balance, account_current_balance, account_version, created_at)
+        VALUES (to_account_id_param, transfer_id, amount_param, to_account.balance - amount_param, to_account.balance, to_account.version, now());
+    END LOOP;
+
+    -- Return all created transfers
     RETURN QUERY
     SELECT
         t.id,
@@ -183,6 +219,7 @@ BEGIN
         t.amount,
         t.created_at
     FROM pgledger_transfers t
-    WHERE t.id = transfer_id;
+    WHERE t.id = ANY(transfer_ids)
+    ORDER BY t.id;
 END;
 $$ LANGUAGE plpgsql;
