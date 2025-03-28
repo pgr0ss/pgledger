@@ -103,6 +103,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- AI! Write a function that is similar to pgledger_create_transfer but takes a list of transfers, and write an example of how to call it.
 CREATE OR REPLACE FUNCTION pgledger_create_transfer(from_account_id_param BIGINT, to_account_id_param BIGINT, amount_param NUMERIC) RETURNS TABLE(id BIGINT, from_account_id BIGINT, to_account_id BIGINT, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
 DECLARE
     transfer_id BIGINT;
