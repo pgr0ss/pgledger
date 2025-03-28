@@ -351,26 +351,15 @@ func TestConcurrencyWithCurrencyExchange(t *testing.T) {
 	liquidityUSD := createAccount(ctx, t, conn, "liquidity.USD", "USD")
 	liquidityEUR := createAccount(ctx, t, conn, "liquidity.EUR", "EUR")
 
-	_, err := conn.Exec(ctx, fmt.Sprintf(`
-		BEGIN;
-		select * from pgledger_create_transfer('%[1]s', '%[2]s', '10.00');
-		select * from pgledger_create_transfer('%[3]s', '%[4]s', '9.26');
-		COMMIT;
-		`, userUSD.ID, liquidityUSD.ID, liquidityEUR.ID, userEUR.ID))
-	assert.NoError(t, err)
-
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	go func() {
 		defer wg.Done()
 		for range 500 {
-			_, err := conn.Exec(ctx, fmt.Sprintf(`
-				BEGIN;
-				select * from pgledger_create_transfer('%[1]s', '%[2]s', '10.00');
-				select * from pgledger_create_transfer('%[3]s', '%[4]s', '9.26');
-				COMMIT;
-				`, userUSD.ID, liquidityUSD.ID, liquidityEUR.ID, userEUR.ID))
+			_, err := conn.Exec(ctx,
+				"select * from pgledger_create_transfers_v(($1, $2, '10.00'), ($3, $4, '9.26'))",
+				userUSD.ID, liquidityUSD.ID, liquidityEUR.ID, userEUR.ID)
 			assert.NoError(t, err)
 		}
 	}()
@@ -378,12 +367,9 @@ func TestConcurrencyWithCurrencyExchange(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for range 500 {
-			_, err := conn.Exec(ctx, fmt.Sprintf(`
-				BEGIN;
-				select * from pgledger_create_transfer('%[1]s', '%[2]s', '9.26');
-				select * from pgledger_create_transfer('%[3]s', '%[4]s', '10.00');
-				COMMIT;
-				`, userEUR.ID, liquidityEUR.ID, liquidityUSD.ID, userUSD.ID))
+			_, err := conn.Exec(ctx,
+				"select * from pgledger_create_transfers_v(($1, $2, '9.26'), ($3, $4, '10.00'))",
+				userEUR.ID, liquidityEUR.ID, liquidityUSD.ID, userUSD.ID)
 			assert.NoError(t, err)
 		}
 	}()
