@@ -338,3 +338,61 @@ func TestConcurrency(t *testing.T) {
 	assert.Equal(t, "0", foundAccount1.Balance)
 	assert.Equal(t, "0", foundAccount2.Balance)
 }
+
+func TestConcurrencyWithCurrencyExchange(t *testing.T) {
+	conn := dbconn(t)
+	ctx := t.Context()
+
+	// Create two accounts with different currencies
+	userUSD := createAccount(ctx, t, conn, "user.USD", "USD")
+	userEUR := createAccount(ctx, t, conn, "user.EUR", "EUR")
+
+	// Liquidity accounts for the conversion
+	liquidityUSD := createAccount(ctx, t, conn, "liquidity.USD", "USD")
+	liquidityEUR := createAccount(ctx, t, conn, "liquidity.EUR", "EUR")
+
+	_, err := conn.Exec(ctx, fmt.Sprintf(`
+		BEGIN;
+		select * from pgledger_create_transfer('%[1]s', '%[2]s', '10.00');
+		select * from pgledger_create_transfer('%[3]s', '%[4]s', '9.26');
+		COMMIT;
+		`, userUSD.ID, liquidityUSD.ID, liquidityEUR.ID, userEUR.ID))
+	assert.NoError(t, err)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		for range 500 {
+			_, err := conn.Exec(ctx, fmt.Sprintf(`
+				BEGIN;
+				select * from pgledger_create_transfer('%[1]s', '%[2]s', '10.00');
+				select * from pgledger_create_transfer('%[3]s', '%[4]s', '9.26');
+				COMMIT;
+				`, userUSD.ID, liquidityUSD.ID, liquidityEUR.ID, userEUR.ID))
+			assert.NoError(t, err)
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		for range 500 {
+			_, err := conn.Exec(ctx, fmt.Sprintf(`
+				BEGIN;
+				select * from pgledger_create_transfer('%[1]s', '%[2]s', '9.26');
+				select * from pgledger_create_transfer('%[3]s', '%[4]s', '10.00');
+				COMMIT;
+				`, userEUR.ID, liquidityEUR.ID, liquidityUSD.ID, userUSD.ID))
+			assert.NoError(t, err)
+		}
+	}()
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+
+	assert.Equal(t, "0", getAccount(ctx, t, conn, userUSD.ID).Balance)
+	assert.Equal(t, "0", getAccount(ctx, t, conn, userEUR.ID).Balance)
+	assert.Equal(t, "0", getAccount(ctx, t, conn, liquidityUSD.ID).Balance)
+	assert.Equal(t, "0", getAccount(ctx, t, conn, liquidityEUR.ID).Balance)
+}

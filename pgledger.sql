@@ -45,127 +45,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Define a composite type for transfer requests
-CREATE TYPE transfer_request AS (
-    from_account_id BIGINT,
-    to_account_id BIGINT,
-    amount NUMERIC
-);
-
--- Function to create multiple transfers in a single transaction
-CREATE OR REPLACE FUNCTION pgledger_create_transfers(
-    transfers transfer_request[]
-) RETURNS TABLE(id BIGINT, from_account_id BIGINT, to_account_id BIGINT, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
-DECLARE
-    transfer transfer_request;
-    transfer_ids BIGINT[] := '{}';
-    transfer_id BIGINT;
-    from_account RECORD;
-    to_account RECORD;
-    from_account_id_param BIGINT;
-    to_account_id_param BIGINT;
-    amount_param NUMERIC;
-    all_account_ids BIGINT[] := '{}';
-    locked_accounts BIGINT[] := '{}';
-BEGIN
-    -- Collect all unique account IDs and sort them to prevent deadlocks
-    FOREACH transfer IN ARRAY transfers LOOP
-        all_account_ids := array_append(all_account_ids, transfer.from_account_id);
-        all_account_ids := array_append(all_account_ids, transfer.to_account_id);
-    END LOOP;
-    
-    -- Remove duplicates and sort
-    SELECT ARRAY(SELECT DISTINCT unnest FROM unnest(all_account_ids) ORDER BY unnest)
-    INTO all_account_ids;
-    
-    -- Lock all accounts in order
-    FOREACH from_account_id_param IN ARRAY all_account_ids LOOP
-        PERFORM pgledger_accounts.id
-        FROM pgledger_accounts
-        WHERE pgledger_accounts.id = from_account_id_param
-        FOR UPDATE;
-        
-        locked_accounts := array_append(locked_accounts, from_account_id_param);
-    END LOOP;
-
-    -- Process each transfer
-    FOREACH transfer IN ARRAY transfers LOOP
-        from_account_id_param := transfer.from_account_id;
-        to_account_id_param := transfer.to_account_id;
-        amount_param := transfer.amount;
-        
-        -- Preliminary checks
-        IF amount_param <= 0 THEN
-            RAISE EXCEPTION 'Amount (%) must be positive', amount_param;
-        END IF;
-
-        IF from_account_id_param = to_account_id_param THEN
-            RAISE EXCEPTION 'Cannot transfer to the same account (id=%)', from_account_id_param;
-        END IF;
-
-        -- Update account balances
-        UPDATE pgledger_accounts
-        SET balance = balance - amount_param,
-            version = version + 1,
-            updated_at = now()
-        WHERE pgledger_accounts.id = from_account_id_param
-        RETURNING * INTO from_account;
-
-        -- Check balance constraints for the source account
-        PERFORM pgledger_check_account_balance_constraints(from_account);
-
-        UPDATE pgledger_accounts
-        SET balance = balance + amount_param,
-            version = version + 1,
-            updated_at = now()
-        WHERE pgledger_accounts.id = to_account_id_param
-        RETURNING * INTO to_account;
-
-        -- Check balance constraints for the destination account
-        PERFORM pgledger_check_account_balance_constraints(to_account);
-
-        -- Check that currencies match
-        IF from_account.currency != to_account.currency THEN
-            RAISE EXCEPTION 'Cannot transfer between different currencies (% and %)', from_account.currency, to_account.currency;
-        END IF;
-
-        -- Create transfer record
-        INSERT INTO pgledger_transfers (from_account_id, to_account_id, amount, created_at)
-        VALUES (from_account_id_param, to_account_id_param, amount_param, now())
-        RETURNING pgledger_transfers.id INTO transfer_id;
-        
-        transfer_ids := array_append(transfer_ids, transfer_id);
-
-        -- Create entry for the source account (negative amount)
-        INSERT INTO pgledger_entries (account_id, transfer_id, amount, account_previous_balance, account_current_balance, account_version, created_at)
-        VALUES (from_account_id_param, transfer_id, -amount_param, from_account.balance + amount_param, from_account.balance, from_account.version, now());
-
-        -- Create entry for the destination account (positive amount)
-        INSERT INTO pgledger_entries (account_id, transfer_id, amount, account_previous_balance, account_current_balance, account_version, created_at)
-        VALUES (to_account_id_param, transfer_id, amount_param, to_account.balance - amount_param, to_account.balance, to_account.version, now());
-    END LOOP;
-
-    -- Return all created transfers
-    RETURN QUERY
-    SELECT
-        t.id,
-        t.from_account_id,
-        t.to_account_id,
-        t.amount,
-        t.created_at
-    FROM pgledger_transfers t
-    WHERE t.id = ANY(transfer_ids)
-    ORDER BY t.id;
-END;
-$$ LANGUAGE plpgsql;
-
--- Example of how to call pgledger_create_transfers:
--- SELECT * FROM pgledger_create_transfers(ARRAY[
---     ROW(1, 2, 10.00)::transfer_request,
---     ROW(1, 3, 5.50)::transfer_request,
---     ROW(2, 3, 3.25)::transfer_request
--- ]);
-
 CREATE OR REPLACE FUNCTION pgledger_create_account(
     name_param TEXT,
     currency_param TEXT,
@@ -305,5 +184,233 @@ BEGIN
         t.created_at
     FROM pgledger_transfers t
     WHERE t.id = transfer_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Define a composite type for transfer requests
+CREATE TYPE transfer_request AS (
+    from_account_id BIGINT,
+    to_account_id BIGINT,
+    amount NUMERIC
+);
+
+-- Function to create multiple transfers in a single transaction
+CREATE OR REPLACE FUNCTION pgledger_create_transfers(
+    transfers transfer_request[]
+) RETURNS TABLE(id BIGINT, from_account_id BIGINT, to_account_id BIGINT, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
+DECLARE
+    transfer transfer_request;
+    transfer_ids BIGINT[] := '{}';
+    transfer_id BIGINT;
+    from_account RECORD;
+    to_account RECORD;
+    from_account_id_param BIGINT;
+    to_account_id_param BIGINT;
+    amount_param NUMERIC;
+    all_account_ids BIGINT[] := '{}';
+    locked_accounts BIGINT[] := '{}';
+BEGIN
+    -- Collect all unique account IDs and sort them to prevent deadlocks
+    FOREACH transfer IN ARRAY transfers LOOP
+        all_account_ids := array_append(all_account_ids, transfer.from_account_id);
+        all_account_ids := array_append(all_account_ids, transfer.to_account_id);
+    END LOOP;
+
+    -- Remove duplicates and sort
+    SELECT ARRAY(SELECT DISTINCT unnest FROM unnest(all_account_ids) ORDER BY unnest)
+    INTO all_account_ids;
+
+    -- Lock all accounts in order
+    FOREACH from_account_id_param IN ARRAY all_account_ids LOOP
+        PERFORM pgledger_accounts.id
+        FROM pgledger_accounts
+        WHERE pgledger_accounts.id = from_account_id_param
+        FOR UPDATE;
+
+        locked_accounts := array_append(locked_accounts, from_account_id_param);
+    END LOOP;
+
+    -- Process each transfer
+    FOREACH transfer IN ARRAY transfers LOOP
+        from_account_id_param := transfer.from_account_id;
+        to_account_id_param := transfer.to_account_id;
+        amount_param := transfer.amount;
+
+        -- Preliminary checks
+        IF amount_param <= 0 THEN
+            RAISE EXCEPTION 'Amount (%) must be positive', amount_param;
+        END IF;
+
+        IF from_account_id_param = to_account_id_param THEN
+            RAISE EXCEPTION 'Cannot transfer to the same account (id=%)', from_account_id_param;
+        END IF;
+
+        -- Update account balances
+        UPDATE pgledger_accounts
+        SET balance = balance - amount_param,
+            version = version + 1,
+            updated_at = now()
+        WHERE pgledger_accounts.id = from_account_id_param
+        RETURNING * INTO from_account;
+
+        -- Check balance constraints for the source account
+        PERFORM pgledger_check_account_balance_constraints(from_account);
+
+        UPDATE pgledger_accounts
+        SET balance = balance + amount_param,
+            version = version + 1,
+            updated_at = now()
+        WHERE pgledger_accounts.id = to_account_id_param
+        RETURNING * INTO to_account;
+
+        -- Check balance constraints for the destination account
+        PERFORM pgledger_check_account_balance_constraints(to_account);
+
+        -- Check that currencies match
+        IF from_account.currency != to_account.currency THEN
+            RAISE EXCEPTION 'Cannot transfer between different currencies (% and %)', from_account.currency, to_account.currency;
+        END IF;
+
+        -- Create transfer record
+        INSERT INTO pgledger_transfers (from_account_id, to_account_id, amount, created_at)
+        VALUES (from_account_id_param, to_account_id_param, amount_param, now())
+        RETURNING pgledger_transfers.id INTO transfer_id;
+
+        transfer_ids := array_append(transfer_ids, transfer_id);
+
+        -- Create entry for the source account (negative amount)
+        INSERT INTO pgledger_entries (account_id, transfer_id, amount, account_previous_balance, account_current_balance, account_version, created_at)
+        VALUES (from_account_id_param, transfer_id, -amount_param, from_account.balance + amount_param, from_account.balance, from_account.version, now());
+
+        -- Create entry for the destination account (positive amount)
+        INSERT INTO pgledger_entries (account_id, transfer_id, amount, account_previous_balance, account_current_balance, account_version, created_at)
+        VALUES (to_account_id_param, transfer_id, amount_param, to_account.balance - amount_param, to_account.balance, to_account.version, now());
+    END LOOP;
+
+    -- Return all created transfers
+    RETURN QUERY
+    SELECT
+        t.id,
+        t.from_account_id,
+        t.to_account_id,
+        t.amount,
+        t.created_at
+    FROM pgledger_transfers t
+    WHERE t.id = ANY(transfer_ids)
+    ORDER BY t.id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Example of how to call pgledger_create_transfers:
+-- SELECT * FROM pgledger_create_transfers(ARRAY[
+--     ROW(1, 2, 10.00)::transfer_request,
+--     ROW(1, 3, 5.50)::transfer_request,
+--     ROW(2, 3, 3.25)::transfer_request
+-- ]);
+
+-- Function to create multiple transfers in a single transaction
+CREATE OR REPLACE FUNCTION pgledger_create_transfers_v(
+    VARIADIC transfers transfer_request[]
+) RETURNS TABLE(id BIGINT, from_account_id BIGINT, to_account_id BIGINT, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
+DECLARE
+    transfer transfer_request;
+    transfer_ids BIGINT[] := '{}';
+    transfer_id BIGINT;
+    from_account RECORD;
+    to_account RECORD;
+    from_account_id_param BIGINT;
+    to_account_id_param BIGINT;
+    amount_param NUMERIC;
+    all_account_ids BIGINT[] := '{}';
+    locked_accounts BIGINT[] := '{}';
+BEGIN
+    -- Collect all unique account IDs and sort them to prevent deadlocks
+    FOREACH transfer IN ARRAY transfers LOOP
+        all_account_ids := array_append(all_account_ids, transfer.from_account_id);
+        all_account_ids := array_append(all_account_ids, transfer.to_account_id);
+    END LOOP;
+
+    -- Remove duplicates and sort
+    SELECT ARRAY(SELECT DISTINCT unnest FROM unnest(all_account_ids) ORDER BY unnest)
+    INTO all_account_ids;
+
+    -- Lock all accounts in order
+    FOREACH from_account_id_param IN ARRAY all_account_ids LOOP
+        PERFORM pgledger_accounts.id
+        FROM pgledger_accounts
+        WHERE pgledger_accounts.id = from_account_id_param
+        FOR UPDATE;
+
+        locked_accounts := array_append(locked_accounts, from_account_id_param);
+    END LOOP;
+
+    -- Process each transfer
+    FOREACH transfer IN ARRAY transfers LOOP
+        from_account_id_param := transfer.from_account_id;
+        to_account_id_param := transfer.to_account_id;
+        amount_param := transfer.amount;
+
+        -- Preliminary checks
+        IF amount_param <= 0 THEN
+            RAISE EXCEPTION 'Amount (%) must be positive', amount_param;
+        END IF;
+
+        IF from_account_id_param = to_account_id_param THEN
+            RAISE EXCEPTION 'Cannot transfer to the same account (id=%)', from_account_id_param;
+        END IF;
+
+        -- Update account balances
+        UPDATE pgledger_accounts
+        SET balance = balance - amount_param,
+            version = version + 1,
+            updated_at = now()
+        WHERE pgledger_accounts.id = from_account_id_param
+        RETURNING * INTO from_account;
+
+        -- Check balance constraints for the source account
+        PERFORM pgledger_check_account_balance_constraints(from_account);
+
+        UPDATE pgledger_accounts
+        SET balance = balance + amount_param,
+            version = version + 1,
+            updated_at = now()
+        WHERE pgledger_accounts.id = to_account_id_param
+        RETURNING * INTO to_account;
+
+        -- Check balance constraints for the destination account
+        PERFORM pgledger_check_account_balance_constraints(to_account);
+
+        -- Check that currencies match
+        IF from_account.currency != to_account.currency THEN
+            RAISE EXCEPTION 'Cannot transfer between different currencies (% and %)', from_account.currency, to_account.currency;
+        END IF;
+
+        -- Create transfer record
+        INSERT INTO pgledger_transfers (from_account_id, to_account_id, amount, created_at)
+        VALUES (from_account_id_param, to_account_id_param, amount_param, now())
+        RETURNING pgledger_transfers.id INTO transfer_id;
+
+        transfer_ids := array_append(transfer_ids, transfer_id);
+
+        -- Create entry for the source account (negative amount)
+        INSERT INTO pgledger_entries (account_id, transfer_id, amount, account_previous_balance, account_current_balance, account_version, created_at)
+        VALUES (from_account_id_param, transfer_id, -amount_param, from_account.balance + amount_param, from_account.balance, from_account.version, now());
+
+        -- Create entry for the destination account (positive amount)
+        INSERT INTO pgledger_entries (account_id, transfer_id, amount, account_previous_balance, account_current_balance, account_version, created_at)
+        VALUES (to_account_id_param, transfer_id, amount_param, to_account.balance - amount_param, to_account.balance, to_account.version, now());
+    END LOOP;
+
+    -- Return all created transfers
+    RETURN QUERY
+    SELECT
+        t.id,
+        t.from_account_id,
+        t.to_account_id,
+        t.amount,
+        t.created_at
+    FROM pgledger_transfers t
+    WHERE t.id = ANY(transfer_ids)
+    ORDER BY t.id;
 END;
 $$ LANGUAGE plpgsql;
