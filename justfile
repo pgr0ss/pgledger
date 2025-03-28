@@ -15,6 +15,9 @@ dbreset: dbclean dbload
 clean:
   cd go && go clean -testcache
 
+tidy:
+  cd go && go mod tidy
+
 test:
   cd go && go test -v ./...
 
@@ -43,4 +46,4 @@ deadcode:
 modernize:
   cd go && go tool modernize -test ./...
 
-check: dbreset dbload clean test lint
+check: dbreset dbload clean tidy test lint
