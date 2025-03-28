@@ -47,15 +47,12 @@ $$ LANGUAGE plpgsql;
 
 -- Function to create multiple transfers in a single transaction
 CREATE OR REPLACE FUNCTION pgledger_create_transfers(
-    from_account_ids BIGINT[],
-    to_account_ids BIGINT[],
-    amounts NUMERIC[]
+    transfers JSON
 ) RETURNS TABLE(id BIGINT, from_account_id BIGINT, to_account_id BIGINT, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
 DECLARE
-    i INT;
+    transfer_record RECORD;
     transfer_ids BIGINT[] := '{}';
     transfer_id BIGINT;
-    account_ids INT[];
     from_account RECORD;
     to_account RECORD;
     from_account_id_param BIGINT;
@@ -64,16 +61,10 @@ DECLARE
     all_account_ids BIGINT[] := '{}';
     locked_accounts BIGINT[] := '{}';
 BEGIN
-    -- Check that all arrays have the same length
-    IF array_length(from_account_ids, 1) != array_length(to_account_ids, 1) OR 
-       array_length(from_account_ids, 1) != array_length(amounts, 1) THEN
-        RAISE EXCEPTION 'All input arrays must have the same length';
-    END IF;
-
     -- Collect all unique account IDs and sort them to prevent deadlocks
-    FOR i IN 1..array_length(from_account_ids, 1) LOOP
-        all_account_ids := array_append(all_account_ids, from_account_ids[i]);
-        all_account_ids := array_append(all_account_ids, to_account_ids[i]);
+    FOR transfer_record IN SELECT * FROM json_to_recordset(transfers) AS x(from_account_id BIGINT, to_account_id BIGINT, amount NUMERIC) LOOP
+        all_account_ids := array_append(all_account_ids, transfer_record.from_account_id);
+        all_account_ids := array_append(all_account_ids, transfer_record.to_account_id);
     END LOOP;
     
     -- Remove duplicates and sort
@@ -91,10 +82,10 @@ BEGIN
     END LOOP;
 
     -- Process each transfer
-    FOR i IN 1..array_length(from_account_ids, 1) LOOP
-        from_account_id_param := from_account_ids[i];
-        to_account_id_param := to_account_ids[i];
-        amount_param := amounts[i];
+    FOR transfer_record IN SELECT * FROM json_to_recordset(transfers) AS x(from_account_id BIGINT, to_account_id BIGINT, amount NUMERIC) LOOP
+        from_account_id_param := transfer_record.from_account_id;
+        to_account_id_param := transfer_record.to_account_id;
+        amount_param := transfer_record.amount;
         
         -- Preliminary checks
         IF amount_param <= 0 THEN
@@ -162,11 +153,11 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Example of how to call pgledger_create_transfers:
--- SELECT * FROM pgledger_create_transfers(
---     ARRAY[1, 1, 2],     -- from_account_ids
---     ARRAY[2, 3, 3],     -- to_account_ids
---     ARRAY[10.00, 5.50, 3.25]  -- amounts
--- );
+-- SELECT * FROM pgledger_create_transfers('[
+--     {"from_account_id": 1, "to_account_id": 2, "amount": 10.00},
+--     {"from_account_id": 1, "to_account_id": 3, "amount": 5.50},
+--     {"from_account_id": 2, "to_account_id": 3, "amount": 3.25}
+-- ]');
 
 CREATE OR REPLACE FUNCTION pgledger_create_account(
     name_param TEXT,
