@@ -45,12 +45,19 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Define a composite type for transfer requests
+CREATE TYPE transfer_request AS (
+    from_account_id BIGINT,
+    to_account_id BIGINT,
+    amount NUMERIC
+);
+
 -- Function to create multiple transfers in a single transaction
 CREATE OR REPLACE FUNCTION pgledger_create_transfers(
-    transfers JSON
+    transfers transfer_request[]
 ) RETURNS TABLE(id BIGINT, from_account_id BIGINT, to_account_id BIGINT, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
 DECLARE
-    transfer_record RECORD;
+    transfer transfer_request;
     transfer_ids BIGINT[] := '{}';
     transfer_id BIGINT;
     from_account RECORD;
@@ -62,9 +69,9 @@ DECLARE
     locked_accounts BIGINT[] := '{}';
 BEGIN
     -- Collect all unique account IDs and sort them to prevent deadlocks
-    FOR transfer_record IN SELECT * FROM json_to_recordset(transfers) AS x(from_account_id BIGINT, to_account_id BIGINT, amount NUMERIC) LOOP
-        all_account_ids := array_append(all_account_ids, transfer_record.from_account_id);
-        all_account_ids := array_append(all_account_ids, transfer_record.to_account_id);
+    FOREACH transfer IN ARRAY transfers LOOP
+        all_account_ids := array_append(all_account_ids, transfer.from_account_id);
+        all_account_ids := array_append(all_account_ids, transfer.to_account_id);
     END LOOP;
     
     -- Remove duplicates and sort
@@ -82,10 +89,10 @@ BEGIN
     END LOOP;
 
     -- Process each transfer
-    FOR transfer_record IN SELECT * FROM json_to_recordset(transfers) AS x(from_account_id BIGINT, to_account_id BIGINT, amount NUMERIC) LOOP
-        from_account_id_param := transfer_record.from_account_id;
-        to_account_id_param := transfer_record.to_account_id;
-        amount_param := transfer_record.amount;
+    FOREACH transfer IN ARRAY transfers LOOP
+        from_account_id_param := transfer.from_account_id;
+        to_account_id_param := transfer.to_account_id;
+        amount_param := transfer.amount;
         
         -- Preliminary checks
         IF amount_param <= 0 THEN
@@ -153,11 +160,11 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Example of how to call pgledger_create_transfers:
--- SELECT * FROM pgledger_create_transfers('[
---     {"from_account_id": 1, "to_account_id": 2, "amount": 10.00},
---     {"from_account_id": 1, "to_account_id": 3, "amount": 5.50},
---     {"from_account_id": 2, "to_account_id": 3, "amount": 3.25}
--- ]');
+-- SELECT * FROM pgledger_create_transfers(ARRAY[
+--     ROW(1, 2, 10.00)::transfer_request,
+--     ROW(1, 3, 5.50)::transfer_request,
+--     ROW(2, 3, 3.25)::transfer_request
+-- ]);
 
 CREATE OR REPLACE FUNCTION pgledger_create_account(
     name_param TEXT,
