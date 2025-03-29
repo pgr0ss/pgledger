@@ -322,7 +322,6 @@ DECLARE
     to_account_id_param BIGINT;
     amount_param NUMERIC;
     all_account_ids BIGINT[] := '{}';
-    locked_accounts BIGINT[] := '{}';
 BEGIN
     -- Collect all unique account IDs and sort them to prevent deadlocks
     FOREACH transfer IN ARRAY transfers LOOP
@@ -340,8 +339,6 @@ BEGIN
         FROM pgledger_accounts
         WHERE pgledger_accounts.id = from_account_id_param
         FOR UPDATE;
-
-        locked_accounts := array_append(locked_accounts, from_account_id_param);
     END LOOP;
 
     -- Process each transfer
