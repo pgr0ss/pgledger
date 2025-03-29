@@ -358,7 +358,7 @@ func TestConcurrencyWithCurrencyExchange(t *testing.T) {
 		defer wg.Done()
 		for range 500 {
 			_, err := conn.Exec(ctx,
-				"select * from pgledger_create_transfers_v(($1, $2, '10.00'), ($3, $4, '9.26'))",
+				"select * from pgledger_create_transfers(($1, $2, '10.00'), ($3, $4, '9.26'))",
 				userUSD.ID, liquidityUSD.ID, liquidityEUR.ID, userEUR.ID)
 			assert.NoError(t, err)
 		}
@@ -368,7 +368,7 @@ func TestConcurrencyWithCurrencyExchange(t *testing.T) {
 		defer wg.Done()
 		for range 500 {
 			_, err := conn.Exec(ctx,
-				"select * from pgledger_create_transfers_v(($1, $2, '9.26'), ($3, $4, '10.00'))",
+				"select * from pgledger_create_transfers(($1, $2, '9.26'), ($3, $4, '10.00'))",
 				userEUR.ID, liquidityEUR.ID, liquidityUSD.ID, userUSD.ID)
 			assert.NoError(t, err)
 		}
