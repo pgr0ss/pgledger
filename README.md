@@ -45,6 +45,7 @@ select * from pgledger_entries where account_id = $account_2_id;
 ## TODO
 
 - Add effective date to transfers (for when the transfer is recorded now, but it's related to something from the past)
+- Make create_transfers function return account balances as well
 - Add metadata to accounts and transfers - json column?
 - Better primary keys - UUIDs? ULIDs? with prefixes or not? ideally monotonic
 - Query via versioned views
@@ -63,3 +64,4 @@ select * from pgledger_entries where account_id = $account_2_id;
   - Also dump an overall pgledger.sql so it's easier to review in one place
 - Add postgres documentation comments?
 - Show how name can be used like ltree: https://www.postgresql.org/docs/current/ltree.html
+  - Allow create_transfers to take account name instead of id? Or a separate function for this?
