@@ -94,7 +94,7 @@ func createTransfer(ctx context.Context, t TestingT, conn *pgxpool.Pool, fromAcc
 }
 
 func createTransferReturnErr(ctx context.Context, conn *pgxpool.Pool, fromAccountID, toAccountID, amount string) (*Transfer, error) {
-	rows, err := conn.Query(ctx, "select * from pgledger_create_transfer($1, $2, $3)", fromAccountID, toAccountID, amount)
+	rows, err := conn.Query(ctx, "select * from pgledger_create_transfers(($1, $2, $3))", fromAccountID, toAccountID, amount)
 	if err != nil {
 		return nil, err
 	}
