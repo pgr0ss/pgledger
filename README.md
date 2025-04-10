@@ -1,6 +1,8 @@
 # pgledger
 
-A ledger implementation in PostgreSQL.
+A [double entry ledger](https://en.wikipedia.org/wiki/Double-entry_bookkeeping) implementation in PostgreSQL.
+
+For more information on the background and rationale for this project, check out the blog post: [Ledger Implementation in PostgreSQL](https://pgrs.net/2025/03/24/pgledger-ledger-implementation-in-postgresql/).
 
 The implementation is currently in a single file: [pgledger.sql](/pgledger.sql).
 
