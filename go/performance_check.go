@@ -44,7 +44,7 @@ func main() {
 				from := accountIDS[perm[0]]
 				to := accountIDS[perm[1]]
 
-				createTransfer2(ctx, dbconn, from, to)
+				createTransfer(ctx, dbconn, from, to)
 				totalTransfers.Add(1)
 			}
 		}()
@@ -73,7 +73,7 @@ func createAccount(ctx context.Context, conn *pgxpool.Pool) string {
 	return Must1(pgx.CollectExactlyOneRow(rows, pgx.RowTo[string]))
 }
 
-func createTransfer2(ctx context.Context, conn *pgxpool.Pool, fromAccountID, toAccountID string) {
+func createTransfer(ctx context.Context, conn *pgxpool.Pool, fromAccountID, toAccountID string) {
 	rows := Must1(conn.Query(ctx, "select id from pgledger_create_transfer($1, $2, $3)", fromAccountID, toAccountID, rand.Uint32()))
 	_ = Must1(pgx.CollectExactlyOneRow(rows, pgx.RowTo[string]))
 }
