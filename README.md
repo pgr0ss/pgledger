@@ -85,3 +85,4 @@ select * from pgledger_create_transfers(($user1_usd, $liquidity_usd, '10.00'), (
 - Add postgres documentation comments?
 - Show how name can be used like ltree: https://www.postgresql.org/docs/current/ltree.html
   - Allow create_transfers to take account name instead of id? Or a separate function for this?
+- Add a function to get account balance at a specific point in time (select balance from most recent entry before the time)
