@@ -35,12 +35,12 @@ select name, balance, version from pgledger_get_account($account_2_id);
 See ledger entries:
 
 ```sql
-select * from pgledger_entries where account_id = $account_2_id;
+select created_at, account_version, amount, account_previous_balance, account_current_balance from pgledger_entries where account_id = $account_2_id order by id;
 
-  id   | account_id | transfer_id | amount | account_previous_balance | account_current_balance | account_version |          created_at
--------+------------+-------------+--------+--------------------------+-------------------------+-----------------+-------------------------------
- 96198 |         42 |       48103 |  12.34 |                     0.00 |                   12.34 |               1 | 2025-03-19 21:31:03.596426+00
- 96200 |         42 |       48104 |  56.78 |                    12.34 |                   69.12 |               2 | 2025-03-19 21:31:21.615916+00
+          created_at           | account_version | amount | account_previous_balance | account_current_balance
+-------------------------------+-----------------+--------+--------------------------+-------------------------
+ 2025-04-28 04:24:50.787722+00 |               1 |  12.34 |                     0.00 |                   12.34
+ 2025-04-28 04:24:53.25815+00  |               2 |  56.78 |                    12.34 |                   69.12
 (2 rows)
 ```
 
@@ -73,7 +73,9 @@ select * from pgledger_create_transfers(($user1_usd, $liquidity_usd, '10.00'), (
 - Add effective date to transfers (for when the transfer is recorded now, but it's related to something from the past)
 - Make create_transfers function return account balances as well
 - Add metadata to accounts and transfers - json column?
-- Better primary keys - UUIDs? ULIDs? with prefixes or not? ideally monotonic
+- Better primary keys
+  - Currently using UUIDv7, but would love a prefixed ULID or similar. Prefixes like `pgla`, `pglt`, `pgle`, etc.
+  - If we use a type with an embedded time, do we need a `created_at` column? Or maybe we could add a view that includes it by parsing out the UUIDv7/ULID?
 - Query via versioned views
   - `select * from pgledger_transfers_v1`
   - This way I can iterate on the underlying tables without breaking queries

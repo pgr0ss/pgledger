@@ -225,10 +225,10 @@ func TestTransferWithInvalidAccountID(t *testing.T) {
 
 	account1 := createAccount(ctx, t, conn, "account 1", "USD")
 
-	_, err := createTransferReturnErr(ctx, conn, account1.ID, "999", "12.34")
+	_, err := createTransferReturnErr(ctx, conn, account1.ID, "C8C3BAB4-03C4-41CD-A3DE-999999999999", "12.34")
 	assert.ErrorContains(t, err, "violates foreign key constraint")
 
-	_, err = createTransferReturnErr(ctx, conn, "999", account1.ID, "12.34")
+	_, err = createTransferReturnErr(ctx, conn, "C8C3BAB4-03C4-41CD-A3DE-999999999999", account1.ID, "12.34")
 	assert.ErrorContains(t, err, "violates foreign key constraint")
 }
 
