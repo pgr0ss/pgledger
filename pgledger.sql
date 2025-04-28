@@ -104,7 +104,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Helper function to check account balance constraints
-CREATE OR REPLACE FUNCTION pgledger_check_account_balance_constraints(account RECORD) RETURNS VOID AS $$
+CREATE OR REPLACE FUNCTION pgledger_check_account_balance_constraints(account pgledger_accounts) RETURNS VOID AS $$
 BEGIN
     -- If account doesn't allow negative balance and balance is negative, raise an error
     IF NOT account.allow_negative_balance AND (account.balance < 0) THEN
@@ -143,8 +143,8 @@ DECLARE
     transfer transfer_request;
     transfer_ids UUID[] := '{}';
     transfer_id UUID;
-    from_account RECORD;
-    to_account RECORD;
+    from_account pgledger_accounts;
+    to_account pgledger_accounts;
     from_account_id_param UUID;
     to_account_id_param UUID;
     amount_param NUMERIC;
