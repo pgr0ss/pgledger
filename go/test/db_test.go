@@ -440,3 +440,31 @@ func TestConcurrencyWithCurrencyExchange(t *testing.T) {
 	assert.Equal(t, "0", getAccount(ctx, t, conn, liquidityUSD.ID).Balance)
 	assert.Equal(t, "0", getAccount(ctx, t, conn, liquidityEUR.ID).Balance)
 }
+
+func TestIdsAreMonotonic(t *testing.T) {
+	conn := dbconn(t)
+	ctx := t.Context()
+
+	// This query generates a series of ids, and then checks their sort order
+	// against the order in which they were generated
+	sql := `select i, id, row_number() over(order by id) from
+   (select i, pgledger_generate_id() as id from generate_series(1, 20) as i)
+   order by i;`
+	result, err := conn.Query(ctx, sql)
+	assert.NoError(t, err)
+
+	type Row struct {
+		I         int
+		ID        string
+		RowNumber int
+	}
+
+	rows, err := pgx.CollectRows(result, pgx.RowToStructByName[Row])
+	assert.NoError(t, err)
+
+	assert.Len(t, rows, 20)
+
+	for _, row := range rows {
+		assert.Equal(t, row.I, row.RowNumber)
+	}
+}
