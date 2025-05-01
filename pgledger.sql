@@ -373,19 +373,37 @@ $$
 LANGUAGE plpgsql
 IMMUTABLE;
 
+CREATE OR REPLACE FUNCTION prefix_ulid_as_pgid(input text) RETURNS pgid AS $$
+DECLARE
+    split_parts TEXT[];
+BEGIN
+    -- Expect format 'usr_UUID'
+    split_parts := regexp_matches(input, '^([a-z]+)_([0-9a-zA-Z]+)$');
+
+    IF split_parts IS NULL THEN
+        RAISE EXCEPTION 'Invalid format for prefixed ULID. Expected "prefix_ULID". Got: %', input;
+    END IF;
+
+    RETURN (split_parts[1], ulid_to_uuid(split_parts[2]));
+END
+$$
+LANGUAGE plpgsql
+IMMUTABLE;
+
 CREATE TABLE accts (
-    id pgid PRIMARY KEY DEFAULT pg_gen_id('pgla'),
-    id_text text GENERATED ALWAYS AS (pgid_as_ulid(id)) STORED,
+    _id pgid PRIMARY KEY DEFAULT pg_gen_id('pgla'),
+    id text GENERATED ALWAYS AS (pgid_as_ulid(_id)) STORED,
     name TEXT NOT NULL
 );
 
-
--- CREATE FUNCTION pgid_as_ulid(id pgid) RETURNS TEXT
--- AS $$
---     -- select id.prefix || '_' || id.id;
---     select 'abcd';
--- $$ LANGUAGE plpgsql volatile;
+CREATE VIEW accts_v AS
+SELECT pgid_as_ulid(_id) AS id, name
+FROM accts;
 
 CREATE CAST (pgid AS TEXT)
 WITH FUNCTION pgid_as_ulid(pgid)
+AS IMPLICIT;
+
+CREATE CAST (TEXT AS pgid)
+WITH FUNCTION prefix_ulid_as_pgid(TEXT)
 AS IMPLICIT;
