@@ -16,6 +16,7 @@ const (
 	NumAccounts           = 10
 	NumWorkers            = 20
 	NumTransfersPerWorker = 5_000
+	TotalTransfers        = NumWorkers * NumTransfersPerWorker
 )
 
 func main() {
@@ -30,8 +31,10 @@ func main() {
 
 	fmt.Printf("Starting %d workers to each run %d transfers\n", NumWorkers, NumTransfersPerWorker)
 
+	startingSize := dbSize(ctx, dbconn)
+
 	var wg sync.WaitGroup
-	var totalTransfers atomic.Int64
+	var completedTransfers atomic.Int64
 
 	wg.Add(NumWorkers)
 	startTime := time.Now()
@@ -45,7 +48,11 @@ func main() {
 				to := accountIDS[perm[1]]
 
 				createTransfer(ctx, dbconn, from, to)
-				totalTransfers.Add(1)
+				completed := completedTransfers.Add(1)
+
+				if completed%10000 == 0 {
+					fmt.Printf("- Finished %d of %d transfers\n", completed, TotalTransfers)
+				}
 			}
 		}()
 	}
@@ -54,10 +61,21 @@ func main() {
 	wg.Wait()
 
 	elapsed := time.Since(startTime)
-	fmt.Printf("Total transfers: %d in %f seconds, %f transfers/second\n",
-		totalTransfers.Load(),
+
+	fmt.Println("Running VACUUM FULL to clean up database")
+	Must1(dbconn.Exec(ctx, "VACUUM FULL"))
+
+	endingSize := dbSize(ctx, dbconn)
+
+	fmt.Printf(`Completed transfers: %d in %f seconds, taking up %d bytes
+- transfers/second: %f
+- bytes/transfer: %d
+`,
+		completedTransfers.Load(),
 		elapsed.Seconds(),
-		float64(totalTransfers.Load())/elapsed.Seconds())
+		endingSize-startingSize,
+		float64(completedTransfers.Load())/elapsed.Seconds(),
+		(endingSize-startingSize)/completedTransfers.Load())
 }
 
 func Must1[T any](obj T, err error) T {
@@ -76,4 +94,9 @@ func createAccount(ctx context.Context, conn *pgxpool.Pool) string {
 func createTransfer(ctx context.Context, conn *pgxpool.Pool, fromAccountID, toAccountID string) {
 	rows := Must1(conn.Query(ctx, "select id from pgledger_create_transfer($1, $2, $3)", fromAccountID, toAccountID, rand.Uint32()))
 	_ = Must1(pgx.CollectExactlyOneRow(rows, pgx.RowTo[string]))
+}
+
+func dbSize(ctx context.Context, conn *pgxpool.Pool) int64 {
+	rows := Must1(conn.Query(ctx, "select pg_database_size('pgledger')"))
+	return Must1(pgx.CollectExactlyOneRow(rows, pgx.RowTo[int64]))
 }
