@@ -395,6 +395,10 @@ CREATE TABLE accts (
     id text GENERATED ALWAYS AS (pgid_as_ulid(_id)) STORED,
     name TEXT NOT NULL
 );
+create index on accts(id);
+
+insert into accts (name) values ('acct_1');
+insert into accts (name) values ('acct_1');
 
 CREATE VIEW accts_v AS
 SELECT pgid_as_ulid(_id) AS id, name
@@ -407,3 +411,25 @@ AS IMPLICIT;
 CREATE CAST (TEXT AS pgid)
 WITH FUNCTION prefix_ulid_as_pgid(TEXT)
 AS IMPLICIT;
+
+
+create table accts_v1 (
+  id UUID PRIMARY KEY DEFAULT pgledger_generate_id(),
+  name text not null
+);
+
+insert into accts_v1 (name) values ('acct_1');
+insert into accts_v1 (name) values ('acct_2');
+
+CREATE OR REPLACE FUNCTION id_as_prefixed_ulid(prefix text, id uuid) RETURNS TEXT AS $$
+BEGIN
+  RETURN prefix || '_' || uuid_to_ulid(id);
+END
+$$
+LANGUAGE plpgsql
+IMMUTABLE;
+
+create view accts_v1v as
+select id_as_prefixed_ulid('acct_', id) as id,
+name
+from accts_v1;
