@@ -406,7 +406,7 @@ FROM accts;
 
 CREATE CAST (pgid AS TEXT)
 WITH FUNCTION pgid_as_ulid(pgid)
-AS IMPLICIT;
+AS ASSIGNMENT;
 
 CREATE CAST (TEXT AS pgid)
 WITH FUNCTION prefix_ulid_as_pgid(TEXT)
