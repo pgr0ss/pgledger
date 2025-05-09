@@ -400,21 +400,24 @@ create index on accts(id);
 insert into accts (name) values ('acct_1');
 insert into accts (name) values ('acct_1');
 
-CREATE VIEW accts_v AS
-SELECT pgid_as_ulid(_id) AS id, name
-FROM accts;
-
 CREATE CAST (pgid AS TEXT)
 WITH FUNCTION pgid_as_ulid(pgid)
-AS ASSIGNMENT;
+AS IMPLICIT;
+-- AS ASSIGNMENT;
 
 CREATE CAST (TEXT AS pgid)
 WITH FUNCTION prefix_ulid_as_pgid(TEXT)
 AS IMPLICIT;
 
+CREATE VIEW accts_v AS
+-- SELECT pgid_as_ulid(_id) AS id, name
+SELECT _id::text AS id, name
+FROM accts;
+
 
 create table accts_v1 (
   id UUID PRIMARY KEY DEFAULT pgledger_generate_id(),
+  id2 pgid NOT NULL DEFAULT pg_gen_id('pgla'),
   name text not null
 );
 
@@ -428,8 +431,3 @@ END
 $$
 LANGUAGE plpgsql
 IMMUTABLE;
-
-create view accts_v1v as
-select id_as_prefixed_ulid('acct_', id) as id,
-name
-from accts_v1;
