@@ -2,6 +2,8 @@ services:
   postgres:
     container_name: "pgledger_postgres"
     image: "postgres:17.4"
+    command: >
+      -c max_wal_size=2GB
     ports:
       - 5432:5432
     networks:

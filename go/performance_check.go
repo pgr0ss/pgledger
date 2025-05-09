@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"math/rand/v2"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,52 +15,85 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const (
-	NumAccounts           = 10
-	NumWorkers            = 20
-	NumTransfersPerWorker = 5_000
-	TotalTransfers        = NumWorkers * NumTransfersPerWorker
+var (
+	numAccountsFlag = flag.Int("accounts", 10, "Number of accounts to create")
+	numWorkersFlag  = flag.Int("workers", 20, "Number of concurrent workers")
+	durationFlag    = flag.String("duration", "10s", "Duration to run the test (e.g., 30s, 1m, 5m)")
 )
 
+func parseArgs() (accounts, workers int, duration time.Duration) {
+	flag.Parse()
+
+	accounts = *numAccountsFlag
+	workers = *numWorkersFlag
+
+	if accounts < 2 {
+		fmt.Fprintf(os.Stderr, "Need at least 2 accounts to perform transfers.\n")
+		os.Exit(1)
+	}
+
+	duration, err := time.ParseDuration(*durationFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing runtime duration: %v\n", err)
+		os.Exit(1)
+	}
+
+	return
+}
+
 func main() {
+	numAccounts, numWorkers, runDuration := parseArgs()
+
 	ctx := context.Background()
 	dbconn := Must1(pgxpool.New(ctx, "postgres://pgledger:pgledger@localhost:5432/pgledger"))
+	defer dbconn.Close()
 
-	fmt.Printf("Creating %d accounts\n", NumAccounts)
+	fmt.Printf("Creating %d accounts\n", numAccounts)
 	accountIDS := []string{}
-	for range NumAccounts {
+	for range numAccounts {
 		accountIDS = append(accountIDS, createAccount(ctx, dbconn))
 	}
 
-	fmt.Printf("Starting %d workers to each run %d transfers\n", NumWorkers, NumTransfersPerWorker)
+	fmt.Println("Running VACUUM FULL to clean up database")
+	Must1(dbconn.Exec(ctx, "VACUUM FULL"))
 
-	startingSize := dbSize(ctx, dbconn)
+	startingSizeBytes, startingSizePretty := dbSize(ctx, dbconn)
+
+	fmt.Printf("Starting %d workers to run transfers for %s\n", numWorkers, runDuration)
 
 	var wg sync.WaitGroup
 	var completedTransfers atomic.Int64
 
-	wg.Add(NumWorkers)
+	runCtx, cancel := context.WithTimeout(ctx, runDuration)
+	defer cancel()
+
+	wg.Add(numWorkers)
 	startTime := time.Now()
 
-	for range NumWorkers {
+	for range numWorkers {
 		go func() {
 			defer wg.Done()
-			for range NumTransfersPerWorker {
-				perm := rand.Perm(len(accountIDS))
-				from := accountIDS[perm[0]]
-				to := accountIDS[perm[1]]
+			for {
+				select {
+				case <-runCtx.Done():
+					return
+				default:
+					perm := rand.Perm(len(accountIDS))
+					from := accountIDS[perm[0]]
+					to := accountIDS[perm[1]]
 
-				createTransfer(ctx, dbconn, from, to)
-				completed := completedTransfers.Add(1)
+					createTransfer(runCtx, dbconn, from, to)
+					completed := completedTransfers.Add(1)
 
-				if completed%10000 == 0 {
-					fmt.Printf("- Finished %d of %d transfers\n", completed, TotalTransfers)
+					if completed%10000 == 0 {
+						fmt.Printf("- Completed %d transfers so far (elapsed: %d seconds)\n", completed, int(time.Since(startTime).Seconds()))
+					}
 				}
 			}
 		}()
 	}
 
-	fmt.Printf("Waiting for workers to finish\n")
+	fmt.Printf("Waiting for workers to finish (up to %s)...\n", runDuration)
 	wg.Wait()
 
 	elapsed := time.Since(startTime)
@@ -65,22 +101,35 @@ func main() {
 	fmt.Println("Running VACUUM FULL to clean up database")
 	Must1(dbconn.Exec(ctx, "VACUUM FULL"))
 
-	endingSize := dbSize(ctx, dbconn)
+	endingSizeBytes, endingSizePretty := dbSize(ctx, dbconn)
+	totalCompleted := completedTransfers.Load()
 
-	fmt.Printf(`Completed transfers: %d in %f seconds, taking up %d bytes
-- transfers/second: %f
-- bytes/transfer: %d
+	// Avoid division by zero if no transfers were completed
+	bytesPerTransfer := int64(0)
+	if totalCompleted > 0 {
+		bytesPerTransfer = (endingSizeBytes - startingSizeBytes) / totalCompleted
+	}
+
+	fmt.Printf(`
+Completed transfers: %d
+Elapsed time in seconds: %f
+Database size before in bytes: %s
+Database size after in bytes:  %s
+Database size growth in bytes: %d
+Transfers/second: %f
+Bytes/transfer: %d
 `,
 		completedTransfers.Load(),
 		elapsed.Seconds(),
-		endingSize-startingSize,
-		float64(completedTransfers.Load())/elapsed.Seconds(),
-		(endingSize-startingSize)/completedTransfers.Load())
+		startingSizePretty,
+		endingSizePretty,
+		endingSizeBytes-startingSizeBytes,
+		float64(totalCompleted)/elapsed.Seconds(),
+		bytesPerTransfer)
 }
 
 func Must1[T any](obj T, err error) T {
 	if err != nil {
-		fmt.Println("in here?")
 		panic(err)
 	}
 	return obj
@@ -92,11 +141,33 @@ func createAccount(ctx context.Context, conn *pgxpool.Pool) string {
 }
 
 func createTransfer(ctx context.Context, conn *pgxpool.Pool, fromAccountID, toAccountID string) {
-	rows := Must1(conn.Query(ctx, "select id from pgledger_create_transfer($1, $2, $3)", fromAccountID, toAccountID, rand.Uint32()))
-	_ = Must1(pgx.CollectExactlyOneRow(rows, pgx.RowTo[string]))
+	rows, err := conn.Query(ctx, "select id from pgledger_create_transfer($1, $2, $3)", fromAccountID, toAccountID, rand.Uint32())
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
+		panic(err)
+	}
+
+	_, err = pgx.CollectExactlyOneRow(rows, pgx.RowTo[string])
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
+		panic(err)
+	}
 }
 
-func dbSize(ctx context.Context, conn *pgxpool.Pool) int64 {
-	rows := Must1(conn.Query(ctx, "select pg_database_size('pgledger')"))
-	return Must1(pgx.CollectExactlyOneRow(rows, pgx.RowTo[int64]))
+func dbSize(ctx context.Context, conn *pgxpool.Pool) (int64, string) {
+	query := "select pg_database_size('pgledger') as size_bytes, pg_size_pretty(pg_database_size('pgledger')) as size_pretty"
+
+	var sizeBytes int64
+	var sizePretty string
+
+	err := conn.QueryRow(ctx, query).Scan(&sizeBytes, &sizePretty)
+	if err != nil {
+		panic(err)
+	}
+
+	return sizeBytes, sizePretty
 }
