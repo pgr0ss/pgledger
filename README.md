@@ -68,6 +68,19 @@ Now, to transfer between the user's USD and EUR accounts, you create 2 simultane
 select * from pgledger_create_transfers(($user1_usd, $liquidity_usd, '10.00'), ($liquidity_eur, $user1_eur, '9.26'));
 ```
 
+### IDs
+
+IDs for all tables are represented as prefixed [ULIDs](https://github.com/ulid/spec), such as `pgla_01JTVST7XAES5BXHWZN4KR4VEZ` for a ledger account and `pglt_01JTVR1WKXEKCRG7N6YD7XCZA6` for a ledger transfer.
+
+These prefixed ULIDs have the following benefits:
+
+- The prefix makes it easy to see what kind of ID it is, so you are less likely to use the wrong kind of ID
+- The values are monotonically increasing, which means the IDs are generated in sorted order
+- ULIDs can be converted into UUIDs, so there can be future optimizations where we store the underlying values as UUIDs instead of TEXT to save space
+- ULIDs have a nicer format than UUIDs (e.g. URL safe and shorter)
+
+For more info about prefixed ULIDs as Ids, check out this blog post: [ULID Identifiers and ULID Tools Website](https://pgrs.net/2023/01/10/ulid-identifiers-and-ulid-tools-website/).
+
 ## TODO
 
 - Add effective date to transfers (for when the transfer is recorded now, but it's related to something from the past)

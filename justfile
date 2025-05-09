@@ -8,7 +8,13 @@ dbclean:
   docker compose exec postgres createdb -U {{dbname}} {{dbname}}
 
 dbload:
-  docker compose exec --no-TTY postgres psql -U {{dbname}} --single-transaction -f /code/pgledger.sql {{dbname}}
+  docker compose exec --no-TTY postgres psql \
+    -U {{dbname}} \
+    --single-transaction \
+    -f /code/vendor/scoville-pgsql-ulid/ulid-to-uuid.sql \
+    -f /code/vendor/scoville-pgsql-ulid/uuid-to-ulid.sql \
+    -f /code/pgledger.sql \
+    {{dbname}}
 
 dbreset: dbclean dbload
 

@@ -3,18 +3,23 @@
 --   From: https://postgresql.verite.pro/blog/2024/07/15/uuid-v7-pure-sql.html
 -- This can be replaced by the builtin uuidv7() function when it's released in
 -- PostgreSQL 18. That one will will be monotonic.
-CREATE FUNCTION pgledger_generate_id() RETURNS uuid
+CREATE FUNCTION uuidv7_microsecond() RETURNS UUID
 AS $$
- select encode(
-   substring(int8send(floor(t_ms)::int8) from 3) ||
-   int2send((7<<12)::int2 | ((t_ms-floor(t_ms))*4096)::int2) ||
-   substring(uuid_send(gen_random_uuid()) from 9 for 8)
-  , 'hex')::uuid
-  from (select extract(epoch from clock_timestamp())*1000 as t_ms) s
-$$ LANGUAGE sql volatile;
+    select encode(
+        substring(int8send(floor(t_ms)::int8) from 3) ||
+        int2send((7<<12)::int2 | ((t_ms-floor(t_ms))*4096)::int2) ||
+        substring(uuid_send(gen_random_uuid()) from 9 for 8)
+        , 'hex')::uuid
+    from (select extract(epoch from clock_timestamp())*1000 as t_ms) s
+$$ LANGUAGE SQL VOLATILE;
+
+CREATE FUNCTION pgledger_generate_id(prefix TEXT) RETURNS TEXT
+AS $$
+ select prefix || '_' || uuid_to_ulid(uuidv7_microsecond())
+$$ LANGUAGE SQL VOLATILE;
 
 CREATE TABLE pgledger_accounts (
-    id UUID PRIMARY KEY DEFAULT pgledger_generate_id(),
+    id TEXT PRIMARY KEY DEFAULT pgledger_generate_id('pgla'),
     name TEXT NOT NULL,
     currency TEXT NOT NULL,
     balance NUMERIC NOT NULL DEFAULT 0,
@@ -26,9 +31,9 @@ CREATE TABLE pgledger_accounts (
 );
 
 CREATE TABLE pgledger_transfers (
-    id UUID PRIMARY KEY DEFAULT pgledger_generate_id(),
-    from_account_id UUID NOT NULL REFERENCES pgledger_accounts(id),
-    to_account_id UUID NOT NULL REFERENCES pgledger_accounts(id),
+    id TEXT PRIMARY KEY DEFAULT pgledger_generate_id('pglt'),
+    from_account_id TEXT NOT NULL REFERENCES pgledger_accounts(id),
+    to_account_id TEXT NOT NULL REFERENCES pgledger_accounts(id),
     amount NUMERIC NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     CHECK (amount > 0 AND from_account_id != to_account_id)
@@ -38,9 +43,9 @@ CREATE INDEX ON pgledger_transfers(from_account_id);
 CREATE INDEX ON pgledger_transfers(to_account_id);
 
 CREATE TABLE pgledger_entries (
-    id UUID PRIMARY KEY DEFAULT pgledger_generate_id(),
-    account_id UUID NOT NULL REFERENCES pgledger_accounts(id),
-    transfer_id UUID NOT NULL REFERENCES pgledger_transfers(id),
+    id TEXT PRIMARY KEY DEFAULT pgledger_generate_id('pgle'),
+    account_id TEXT NOT NULL REFERENCES pgledger_accounts(id),
+    transfer_id TEXT NOT NULL REFERENCES pgledger_transfers(id),
     amount NUMERIC NOT NULL,
     account_previous_balance NUMERIC NOT NULL,
     account_current_balance NUMERIC NOT NULL,
@@ -57,7 +62,7 @@ CREATE OR REPLACE FUNCTION pgledger_create_account(
     allow_negative_balance_param BOOLEAN DEFAULT TRUE,
     allow_positive_balance_param BOOLEAN DEFAULT TRUE
 )
-RETURNS TABLE(id UUID, name TEXT, currency TEXT, balance NUMERIC, version BIGINT, allow_negative_balance BOOLEAN, allow_positive_balance BOOLEAN, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ) AS $$
+RETURNS TABLE(id TEXT, name TEXT, currency TEXT, balance NUMERIC, version BIGINT, allow_negative_balance BOOLEAN, allow_positive_balance BOOLEAN, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ) AS $$
 BEGIN
     RETURN QUERY
     INSERT INTO pgledger_accounts (name, currency, allow_negative_balance, allow_positive_balance, created_at, updated_at)
@@ -68,8 +73,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION pgledger_get_account(id_param UUID)
-RETURNS TABLE(id UUID, name TEXT, currency TEXT, balance NUMERIC, version BIGINT, allow_negative_balance BOOLEAN, allow_positive_balance BOOLEAN, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ) AS $$
+CREATE OR REPLACE FUNCTION pgledger_get_account(id_param TEXT)
+RETURNS TABLE(id TEXT, name TEXT, currency TEXT, balance NUMERIC, version BIGINT, allow_negative_balance BOOLEAN, allow_positive_balance BOOLEAN, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ) AS $$
 BEGIN
     RETURN QUERY
     SELECT pgledger_accounts.id, pgledger_accounts.name, pgledger_accounts.currency, pgledger_accounts.balance, pgledger_accounts.version,
@@ -80,7 +85,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION pgledger_get_transfer(id_param UUID) RETURNS TABLE(id UUID, from_account_id UUID, to_account_id UUID, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
+CREATE OR REPLACE FUNCTION pgledger_get_transfer(id_param TEXT) RETURNS TABLE(id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
 BEGIN
     RETURN QUERY
     SELECT
@@ -111,12 +116,12 @@ $$ LANGUAGE plpgsql;
 
 -- Define a composite type for transfer requests
 CREATE TYPE transfer_request AS (
-    from_account_id UUID,
-    to_account_id UUID,
+    from_account_id TEXT,
+    to_account_id TEXT,
     amount NUMERIC
 );
 
-CREATE OR REPLACE FUNCTION pgledger_create_transfer(from_account_id_param UUID, to_account_id_param UUID, amount_param NUMERIC) RETURNS TABLE(id UUID, from_account_id UUID, to_account_id UUID, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
+CREATE OR REPLACE FUNCTION pgledger_create_transfer(from_account_id_param TEXT, to_account_id_param TEXT, amount_param NUMERIC) RETURNS TABLE(id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
 BEGIN
     -- Simply call pgledger_create_transfers with a single transfer
     RETURN QUERY
@@ -129,17 +134,17 @@ $$ LANGUAGE plpgsql;
 -- Function to create multiple transfers in a single transaction
 CREATE OR REPLACE FUNCTION pgledger_create_transfers(
     VARIADIC transfers transfer_request[]
-) RETURNS TABLE(id UUID, from_account_id UUID, to_account_id UUID, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
+) RETURNS TABLE(id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
 DECLARE
     transfer transfer_request;
-    transfer_ids UUID[] := '{}';
-    transfer_id UUID;
+    transfer_ids TEXT[] := '{}';
+    transfer_id TEXT;
     from_account pgledger_accounts;
     to_account pgledger_accounts;
-    from_account_id_param UUID;
-    to_account_id_param UUID;
+    from_account_id_param TEXT;
+    to_account_id_param TEXT;
     amount_param NUMERIC;
-    all_account_ids UUID[] := '{}';
+    all_account_ids TEXT[] := '{}';
 BEGIN
     -- Collect all unique account IDs and sort them to prevent deadlocks
     FOREACH transfer IN ARRAY transfers LOOP
