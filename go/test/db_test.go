@@ -16,7 +16,7 @@ func TestAddAccount(t *testing.T) {
 
 	account := createAccount(ctx, t, conn, "account 1", "USD")
 
-	assert.Regexp(t, "\\d+", account.ID)
+	assert.Regexp(t, "^pgla_\\w+$", account.ID)
 	assert.Equal(t, "account 1", account.Name)
 	assert.Equal(t, "USD", account.Currency)
 	assert.Equal(t, "0", account.Balance)
@@ -78,7 +78,7 @@ func TestCreateTransfer(t *testing.T) {
 
 	transfer := createTransfer(ctx, t, conn, account1.ID, account2.ID, "12.34")
 
-	assert.Regexp(t, "\\d+", transfer.ID)
+	assert.Regexp(t, "^pglt_\\w+$", transfer.ID)
 	assert.Equal(t, account1.ID, transfer.FromAccountID)
 	assert.Equal(t, account2.ID, transfer.ToAccountID)
 	assert.Equal(t, "12.34", transfer.Amount)
@@ -225,10 +225,10 @@ func TestTransferWithInvalidAccountID(t *testing.T) {
 
 	account1 := createAccount(ctx, t, conn, "account 1", "USD")
 
-	_, err := createTransferReturnErr(ctx, conn, account1.ID, "C8C3BAB4-03C4-41CD-A3DE-999999999999", "12.34")
+	_, err := createTransferReturnErr(ctx, conn, account1.ID, "bad_id", "12.34")
 	assert.ErrorContains(t, err, "violates foreign key constraint")
 
-	_, err = createTransferReturnErr(ctx, conn, "C8C3BAB4-03C4-41CD-A3DE-999999999999", account1.ID, "12.34")
+	_, err = createTransferReturnErr(ctx, conn, "bad_id", account1.ID, "12.34")
 	assert.ErrorContains(t, err, "violates foreign key constraint")
 }
 
@@ -247,6 +247,7 @@ func TestEntries(t *testing.T) {
 
 	assert.Len(t, entries, 3)
 
+	assert.Regexp(t, "^pgle_\\w+$", entries[0].ID)
 	assert.Equal(t, t1.ID, entries[0].TransferID)
 	assert.Equal(t, "-5", entries[0].Amount)
 	assert.Equal(t, "0", entries[0].AccountPreviousBalance)
@@ -254,6 +255,7 @@ func TestEntries(t *testing.T) {
 	assert.Equal(t, 1, entries[0].AccountVersion)
 	assert.WithinDuration(t, time.Now(), entries[0].CreatedAt, time.Minute)
 
+	assert.Regexp(t, "^pgle_\\w+$", entries[1].ID)
 	assert.Equal(t, t2.ID, entries[1].TransferID)
 	assert.Equal(t, "-10", entries[1].Amount)
 	assert.Equal(t, "-5", entries[1].AccountPreviousBalance)
@@ -261,6 +263,7 @@ func TestEntries(t *testing.T) {
 	assert.Equal(t, 2, entries[1].AccountVersion)
 	assert.WithinDuration(t, time.Now(), entries[1].CreatedAt, time.Minute)
 
+	assert.Regexp(t, "^pgle_\\w+$", entries[2].ID)
 	assert.Equal(t, t3.ID, entries[2].TransferID)
 	assert.Equal(t, "20", entries[2].Amount)
 	assert.Equal(t, "-15", entries[2].AccountPreviousBalance)
@@ -272,6 +275,7 @@ func TestEntries(t *testing.T) {
 
 	assert.Len(t, entries, 3)
 
+	assert.Regexp(t, "^pgle_\\w+$", entries[0].ID)
 	assert.Equal(t, t1.ID, entries[0].TransferID)
 	assert.Equal(t, "5", entries[0].Amount)
 	assert.Equal(t, "0", entries[0].AccountPreviousBalance)
@@ -279,6 +283,7 @@ func TestEntries(t *testing.T) {
 	assert.Equal(t, 1, entries[0].AccountVersion)
 	assert.WithinDuration(t, time.Now(), entries[0].CreatedAt, time.Minute)
 
+	assert.Regexp(t, "^pgle_\\w+$", entries[1].ID)
 	assert.Equal(t, t2.ID, entries[1].TransferID)
 	assert.Equal(t, "10", entries[1].Amount)
 	assert.Equal(t, "5", entries[1].AccountPreviousBalance)
@@ -286,6 +291,7 @@ func TestEntries(t *testing.T) {
 	assert.Equal(t, 2, entries[1].AccountVersion)
 	assert.WithinDuration(t, time.Now(), entries[1].CreatedAt, time.Minute)
 
+	assert.Regexp(t, "^pgle_\\w+$", entries[2].ID)
 	assert.Equal(t, t3.ID, entries[2].TransferID)
 	assert.Equal(t, "-20", entries[2].Amount)
 	assert.Equal(t, "15", entries[2].AccountPreviousBalance)
@@ -448,7 +454,7 @@ func TestIdsAreMonotonic(t *testing.T) {
 	// This query generates a series of ids, and then checks their sort order
 	// against the order in which they were generated
 	sql := `select i, id, row_number() over(order by id) from
-   (select i, pgledger_generate_id() as id from generate_series(1, 20) as i)
+   (select i, pgledger_generate_id('prefix') as id from generate_series(1, 20) as i)
    order by i;`
 	result, err := conn.Query(ctx, sql)
 	assert.NoError(t, err)
