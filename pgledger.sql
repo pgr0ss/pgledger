@@ -431,3 +431,29 @@ END
 $$
 LANGUAGE plpgsql
 IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION is_valid_prefixed_ulid(input text) RETURNS BOOL AS $$
+DECLARE
+    split_parts TEXT[];
+BEGIN
+    split_parts := regexp_matches(input, '^([a-z]+)_([0-9a-zA-Z]{26})$');
+
+    IF split_parts IS NULL THEN
+        RETURN FALSE;
+    END IF;
+
+    IF split_parts[1] NOT IN ('pgla', 'pgle', 'pglt') THEN
+      RETURN FALSE;
+    END IF;
+
+    RETURN TRUE;
+END
+$$
+LANGUAGE plpgsql
+IMMUTABLE;
+
+CREATE DOMAIN pgid2 AS TEXT CHECK (is_valid_prefixed_ulid(VALUE));
+
+create table pgid2table (
+id pgid2 not null
+);
