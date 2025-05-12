@@ -13,13 +13,43 @@ AS $$
     from (select extract(epoch from clock_timestamp())*1000 as t_ms) s
 $$ LANGUAGE SQL VOLATILE;
 
-CREATE FUNCTION pgledger_generate_id(prefix TEXT) RETURNS TEXT
+-- Function to check whether the input is a valid prefixed ULID, such as `pglt_01JV35ECCC71VW6QF6M3PNJCC1`
+CREATE OR REPLACE FUNCTION is_valid_prefixed_ulid(input text) RETURNS BOOL AS $$
+DECLARE
+    split_parts TEXT[];
+BEGIN
+    IF input IS NULL THEN
+        RETURN TRUE;
+    END IF;
+
+    split_parts := regexp_matches(input, '^([a-z]+)_([0-9a-zA-Z]{26})$');
+
+    IF split_parts IS NULL THEN
+        RAISE NOTICE 'Invalid pgledger_id format, expected (knownprefix_ULID), got (%s)', input;
+        RETURN FALSE;
+    END IF;
+
+    IF split_parts[1] NOT IN ('pgla', 'pgle', 'pglt') THEN
+        RAISE NOTICE 'Invalid pgledger_id format, expected (knownprefix_ULID), got (%s)', input;
+        RETURN FALSE;
+    END IF;
+
+    RETURN TRUE;
+END
+$$
+LANGUAGE plpgsql
+IMMUTABLE;
+
+-- This creates a pseudo-type for representing IDs, ensuring their format
+CREATE DOMAIN pgledger_id AS TEXT CHECK (is_valid_prefixed_ulid(VALUE));
+
+CREATE FUNCTION pgledger_generate_id(prefix TEXT) RETURNS pgledger_id
 AS $$
- select prefix || '_' || uuid_to_ulid(uuidv7_microsecond())
+    SELECT prefix || '_' || uuid_to_ulid(uuidv7_microsecond())
 $$ LANGUAGE SQL VOLATILE;
 
 CREATE TABLE pgledger_accounts (
-    id TEXT PRIMARY KEY DEFAULT pgledger_generate_id('pgla'),
+    id pgledger_id PRIMARY KEY DEFAULT pgledger_generate_id('pgla'),
     name TEXT NOT NULL,
     currency TEXT NOT NULL,
     balance NUMERIC NOT NULL DEFAULT 0,
@@ -31,9 +61,9 @@ CREATE TABLE pgledger_accounts (
 );
 
 CREATE TABLE pgledger_transfers (
-    id TEXT PRIMARY KEY DEFAULT pgledger_generate_id('pglt'),
-    from_account_id TEXT NOT NULL REFERENCES pgledger_accounts(id),
-    to_account_id TEXT NOT NULL REFERENCES pgledger_accounts(id),
+    id pgledger_id PRIMARY KEY DEFAULT pgledger_generate_id('pglt'),
+    from_account_id pgledger_id NOT NULL REFERENCES pgledger_accounts(id),
+    to_account_id pgledger_id NOT NULL REFERENCES pgledger_accounts(id),
     amount NUMERIC NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     CHECK (amount > 0 AND from_account_id != to_account_id)
@@ -43,9 +73,9 @@ CREATE INDEX ON pgledger_transfers(from_account_id);
 CREATE INDEX ON pgledger_transfers(to_account_id);
 
 CREATE TABLE pgledger_entries (
-    id TEXT PRIMARY KEY DEFAULT pgledger_generate_id('pgle'),
-    account_id TEXT NOT NULL REFERENCES pgledger_accounts(id),
-    transfer_id TEXT NOT NULL REFERENCES pgledger_transfers(id),
+    id pgledger_id PRIMARY KEY DEFAULT pgledger_generate_id('pgle'),
+    account_id pgledger_id NOT NULL REFERENCES pgledger_accounts(id),
+    transfer_id pgledger_id NOT NULL REFERENCES pgledger_transfers(id),
     amount NUMERIC NOT NULL,
     account_previous_balance NUMERIC NOT NULL,
     account_current_balance NUMERIC NOT NULL,
@@ -62,7 +92,7 @@ CREATE OR REPLACE FUNCTION pgledger_create_account(
     allow_negative_balance_param BOOLEAN DEFAULT TRUE,
     allow_positive_balance_param BOOLEAN DEFAULT TRUE
 )
-RETURNS TABLE(id TEXT, name TEXT, currency TEXT, balance NUMERIC, version BIGINT, allow_negative_balance BOOLEAN, allow_positive_balance BOOLEAN, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ) AS $$
+RETURNS TABLE(id pgledger_id, name TEXT, currency TEXT, balance NUMERIC, version BIGINT, allow_negative_balance BOOLEAN, allow_positive_balance BOOLEAN, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ) AS $$
 BEGIN
     RETURN QUERY
     INSERT INTO pgledger_accounts (name, currency, allow_negative_balance, allow_positive_balance, created_at, updated_at)
@@ -73,8 +103,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION pgledger_get_account(id_param TEXT)
-RETURNS TABLE(id TEXT, name TEXT, currency TEXT, balance NUMERIC, version BIGINT, allow_negative_balance BOOLEAN, allow_positive_balance BOOLEAN, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ) AS $$
+CREATE OR REPLACE FUNCTION pgledger_get_account(id_param pgledger_id)
+RETURNS TABLE(id pgledger_id, name TEXT, currency TEXT, balance NUMERIC, version BIGINT, allow_negative_balance BOOLEAN, allow_positive_balance BOOLEAN, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ) AS $$
 BEGIN
     RETURN QUERY
     SELECT pgledger_accounts.id, pgledger_accounts.name, pgledger_accounts.currency, pgledger_accounts.balance, pgledger_accounts.version,
@@ -85,7 +115,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION pgledger_get_transfer(id_param TEXT) RETURNS TABLE(id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
+CREATE OR REPLACE FUNCTION pgledger_get_transfer(id_param pgledger_id)
+RETURNS TABLE(id pgledger_id, from_account_id pgledger_id, to_account_id pgledger_id, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
 BEGIN
     RETURN QUERY
     SELECT
@@ -116,12 +147,13 @@ $$ LANGUAGE plpgsql;
 
 -- Define a composite type for transfer requests
 CREATE TYPE transfer_request AS (
-    from_account_id TEXT,
-    to_account_id TEXT,
+    from_account_id pgledger_id,
+    to_account_id pgledger_id,
     amount NUMERIC
 );
 
-CREATE OR REPLACE FUNCTION pgledger_create_transfer(from_account_id_param TEXT, to_account_id_param TEXT, amount_param NUMERIC) RETURNS TABLE(id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
+CREATE OR REPLACE FUNCTION pgledger_create_transfer(from_account_id_param pgledger_id, to_account_id_param pgledger_id, amount_param NUMERIC)
+RETURNS TABLE(id pgledger_id, from_account_id pgledger_id, to_account_id pgledger_id, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
 BEGIN
     -- Simply call pgledger_create_transfers with a single transfer
     RETURN QUERY
@@ -134,17 +166,17 @@ $$ LANGUAGE plpgsql;
 -- Function to create multiple transfers in a single transaction
 CREATE OR REPLACE FUNCTION pgledger_create_transfers(
     VARIADIC transfers transfer_request[]
-) RETURNS TABLE(id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
+) RETURNS TABLE(id pgledger_id, from_account_id pgledger_id, to_account_id pgledger_id, amount NUMERIC, created_at TIMESTAMPTZ) AS $$
 DECLARE
     transfer transfer_request;
-    transfer_ids TEXT[] := '{}';
-    transfer_id TEXT;
+    transfer_ids pgledger_id[] := '{}';
+    transfer_id pgledger_id;
     from_account pgledger_accounts;
     to_account pgledger_accounts;
-    from_account_id_param TEXT;
-    to_account_id_param TEXT;
+    from_account_id_param pgledger_id;
+    to_account_id_param pgledger_id;
     amount_param NUMERIC;
-    all_account_ids TEXT[] := '{}';
+    all_account_ids pgledger_id[] := '{}';
 BEGIN
     -- Collect all unique account IDs and sort them to prevent deadlocks
     FOREACH transfer IN ARRAY transfers LOOP

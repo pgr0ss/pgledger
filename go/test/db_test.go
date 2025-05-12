@@ -225,10 +225,10 @@ func TestTransferWithInvalidAccountID(t *testing.T) {
 
 	account1 := createAccount(ctx, t, conn, "account 1", "USD")
 
-	_, err := createTransferReturnErr(ctx, conn, account1.ID, "bad_id", "12.34")
+	_, err := createTransferReturnErr(ctx, conn, account1.ID, "pgla_01JV35ECCC71VW6QF6M9999999", "12.34")
 	assert.ErrorContains(t, err, "violates foreign key constraint")
 
-	_, err = createTransferReturnErr(ctx, conn, "bad_id", account1.ID, "12.34")
+	_, err = createTransferReturnErr(ctx, conn, "pgla_01JV35ECCC71VW6QF6M9999999", account1.ID, "12.34")
 	assert.ErrorContains(t, err, "violates foreign key constraint")
 }
 
@@ -454,7 +454,7 @@ func TestIdsAreMonotonic(t *testing.T) {
 	// This query generates a series of ids, and then checks their sort order
 	// against the order in which they were generated
 	sql := `select i, id, row_number() over(order by id) from
-   (select i, pgledger_generate_id('prefix') as id from generate_series(1, 20) as i)
+   (select i, pgledger_generate_id('pglt') as id from generate_series(1, 20) as i)
    order by i;`
 	result, err := conn.Query(ctx, sql)
 	assert.NoError(t, err)
