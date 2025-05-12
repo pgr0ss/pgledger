@@ -51,15 +51,6 @@ CREATE TABLE pgledger_entries (
 CREATE INDEX ON pgledger_entries(account_id);
 CREATE INDEX ON pgledger_entries(transfer_id);
 
-CREATE OR REPLACE FUNCTION pgledger_add_account(name_param TEXT, currency_param TEXT) RETURNS TABLE(id UUID, name TEXT, currency TEXT, balance NUMERIC) AS $$
-BEGIN
-    RETURN QUERY
-    INSERT INTO pgledger_accounts (name, currency, allow_negative_balance, allow_positive_balance, created_at, updated_at)
-    VALUES (name_param, currency_param, TRUE, TRUE, now(), now())
-    RETURNING pgledger_accounts.id, pgledger_accounts.name, pgledger_accounts.currency, pgledger_accounts.balance;
-END;
-$$ LANGUAGE plpgsql;
-
 CREATE OR REPLACE FUNCTION pgledger_create_account(
     name_param TEXT,
     currency_param TEXT,
