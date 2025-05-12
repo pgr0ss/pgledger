@@ -113,8 +113,8 @@ func main() {
 	fmt.Printf(`
 Completed transfers: %d
 Elapsed time in seconds: %f
-Database size before in bytes: %s
-Database size after in bytes:  %s
+Database size before: %s
+Database size after:  %s
 Database size growth in bytes: %d
 Transfers/second: %f
 Bytes/transfer: %d
