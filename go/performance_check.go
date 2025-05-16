@@ -19,13 +19,15 @@ var (
 	numAccountsFlag = flag.Int("accounts", 10, "Number of accounts to create")
 	numWorkersFlag  = flag.Int("workers", 20, "Number of concurrent workers")
 	durationFlag    = flag.String("duration", "10s", "Duration to run the test (e.g., 30s, 1m, 5m)")
+	vacuumFlag      = flag.Bool("vacuum", true, "Vacuum the database before and after to get better size estimates")
 )
 
-func parseArgs() (accounts, workers int, duration time.Duration) {
+func parseArgs() (accounts, workers int, duration time.Duration, vacuum bool) {
 	flag.Parse()
 
 	accounts = *numAccountsFlag
 	workers = *numWorkersFlag
+	vacuum = *vacuumFlag
 
 	if accounts < 2 {
 		fmt.Fprintf(os.Stderr, "Need at least 2 accounts to perform transfers.\n")
@@ -42,7 +44,7 @@ func parseArgs() (accounts, workers int, duration time.Duration) {
 }
 
 func main() {
-	numAccounts, numWorkers, runDuration := parseArgs()
+	numAccounts, numWorkers, runDuration, vacuum := parseArgs()
 
 	ctx := context.Background()
 	dbconn := Must1(pgxpool.New(ctx, "postgres://pgledger:pgledger@localhost:5432/pgledger"))
@@ -54,8 +56,12 @@ func main() {
 		accountIDS = append(accountIDS, createAccount(ctx, dbconn))
 	}
 
-	fmt.Println("Running VACUUM FULL to clean up database")
-	Must1(dbconn.Exec(ctx, "VACUUM FULL"))
+	if vacuum {
+		fmt.Println("Running VACUUM FULL to clean up database")
+		Must1(dbconn.Exec(ctx, "VACUUM FULL"))
+	} else {
+		fmt.Println("Skipping VACUUM FULL ")
+	}
 
 	startingSizeBytes, startingSizePretty := dbSize(ctx, dbconn)
 
@@ -98,8 +104,12 @@ func main() {
 
 	elapsed := time.Since(startTime)
 
-	fmt.Println("Running VACUUM FULL to clean up database")
-	Must1(dbconn.Exec(ctx, "VACUUM FULL"))
+	if vacuum {
+		fmt.Println("Running VACUUM FULL to clean up database")
+		Must1(dbconn.Exec(ctx, "VACUUM FULL"))
+	} else {
+		fmt.Println("Skipping VACUUM FULL ")
+	}
 
 	endingSizeBytes, endingSizePretty := dbSize(ctx, dbconn)
 	totalCompleted := completedTransfers.Load()
@@ -112,11 +122,12 @@ func main() {
 
 	fmt.Printf(`
 Completed transfers: %d
-Elapsed time in seconds: %f
+Elapsed time in seconds: %0.1f
 Database size before: %s
 Database size after:  %s
 Database size growth in bytes: %d
-Transfers/second: %f
+Transfers/second: %0.1f
+Milliseconds/transfer: %0.1f
 Bytes/transfer: %d
 `,
 		completedTransfers.Load(),
@@ -125,6 +136,7 @@ Bytes/transfer: %d
 		endingSizePretty,
 		endingSizeBytes-startingSizeBytes,
 		float64(totalCompleted)/elapsed.Seconds(),
+		float64(elapsed.Milliseconds())/float64(totalCompleted)*float64(numWorkers),
 		bytesPerTransfer)
 }
 
