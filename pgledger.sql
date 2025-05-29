@@ -22,7 +22,7 @@ CREATE TABLE pgledger_accounts (
     id TEXT PRIMARY KEY DEFAULT pgledger_generate_id('pgla'),
     name TEXT NOT NULL,
     currency TEXT NOT NULL,
-    balance NUMERIC NOT NULL DEFAULT 0,
+    balance NUMERIC(20,2) NOT NULL DEFAULT 0,
     version BIGINT NOT NULL DEFAULT 0,
     allow_negative_balance BOOLEAN NOT NULL,
     allow_positive_balance BOOLEAN NOT NULL,
@@ -34,7 +34,7 @@ CREATE TABLE pgledger_transfers (
     id TEXT PRIMARY KEY DEFAULT pgledger_generate_id('pglt'),
     from_account_id TEXT NOT NULL REFERENCES pgledger_accounts(id),
     to_account_id TEXT NOT NULL REFERENCES pgledger_accounts(id),
-    amount NUMERIC NOT NULL,
+    amount NUMERIC(20,2) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     CHECK (amount > 0 AND from_account_id != to_account_id)
 );
@@ -46,9 +46,9 @@ CREATE TABLE pgledger_entries (
     id TEXT PRIMARY KEY DEFAULT pgledger_generate_id('pgle'),
     account_id TEXT NOT NULL REFERENCES pgledger_accounts(id),
     transfer_id TEXT NOT NULL REFERENCES pgledger_transfers(id),
-    amount NUMERIC NOT NULL,
-    account_previous_balance NUMERIC NOT NULL,
-    account_current_balance NUMERIC NOT NULL,
+    amount NUMERIC(20,2) NOT NULL,
+    account_previous_balance NUMERIC(20,2) NOT NULL,
+    account_current_balance NUMERIC(20,2) NOT NULL,
     account_version BIGINT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL
 );
@@ -62,7 +62,7 @@ CREATE OR REPLACE FUNCTION pgledger_create_account(
     allow_negative_balance_param BOOLEAN DEFAULT TRUE,
     allow_positive_balance_param BOOLEAN DEFAULT TRUE
 )
-RETURNS TABLE(id TEXT, name TEXT, currency TEXT, balance NUMERIC, version BIGINT, allow_negative_balance BOOLEAN, allow_positive_balance BOOLEAN, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)
+RETURNS TABLE(id TEXT, name TEXT, currency TEXT, balance NUMERIC(20,2), version BIGINT, allow_negative_balance BOOLEAN, allow_positive_balance BOOLEAN, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)
 AS $$
 BEGIN
     RETURN QUERY
@@ -75,7 +75,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION pgledger_get_account(id_param TEXT)
-RETURNS TABLE(id TEXT, name TEXT, currency TEXT, balance NUMERIC, version BIGINT, allow_negative_balance BOOLEAN, allow_positive_balance BOOLEAN, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)
+RETURNS TABLE(id TEXT, name TEXT, currency TEXT, balance NUMERIC(20,2), version BIGINT, allow_negative_balance BOOLEAN, allow_positive_balance BOOLEAN, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)
 AS $$
 BEGIN
     RETURN QUERY
@@ -88,7 +88,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION pgledger_get_transfer(id_param TEXT)
-RETURNS TABLE(id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ)
+RETURNS TABLE(id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC(20,2), created_at TIMESTAMPTZ)
 AS $$
 BEGIN
     RETURN QUERY
@@ -122,11 +122,11 @@ $$ LANGUAGE plpgsql;
 CREATE TYPE transfer_request AS (
     from_account_id TEXT,
     to_account_id TEXT,
-    amount NUMERIC
+    amount NUMERIC(20,2)
 );
 
-CREATE OR REPLACE FUNCTION pgledger_create_transfer(from_account_id_param TEXT, to_account_id_param TEXT, amount_param NUMERIC)
-RETURNS TABLE(id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ)
+CREATE OR REPLACE FUNCTION pgledger_create_transfer(from_account_id_param TEXT, to_account_id_param TEXT, amount_param NUMERIC(20,2))
+RETURNS TABLE(id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC(20,2), created_at TIMESTAMPTZ)
 AS $$
 BEGIN
     -- Simply call pgledger_create_transfers with a single transfer
@@ -139,7 +139,7 @@ $$ LANGUAGE plpgsql;
 
 -- Function to create multiple transfers in a single transaction
 CREATE OR REPLACE FUNCTION pgledger_create_transfers(VARIADIC transfers transfer_request[])
-RETURNS TABLE(id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ)
+RETURNS TABLE(id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC(20,2), created_at TIMESTAMPTZ)
 AS $$
 DECLARE
     transfer transfer_request;
@@ -149,7 +149,7 @@ DECLARE
     to_account pgledger_accounts;
     from_account_id_param TEXT;
     to_account_id_param TEXT;
-    amount_param NUMERIC;
+    amount_param NUMERIC(20,2);
     all_account_ids TEXT[] := '{}';
 BEGIN
     -- Collect all unique account IDs and sort them to prevent deadlocks
