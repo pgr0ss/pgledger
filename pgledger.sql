@@ -56,6 +56,21 @@ CREATE TABLE pgledger_entries (
 CREATE INDEX ON pgledger_entries(account_id);
 CREATE INDEX ON pgledger_entries(transfer_id);
 
+-- It's recommended to make pgledger_entries an append-only table
+-- REVOKE UPDATE, DELETE, INSERT ON pgledger_entries FROM PUBLIC;
+-- GRANT INSERT ON pgledger_entries TO app_role; -- change to the role your code uses
+
+-- CREATE OR REPLACE FUNCTION prevent_mutation_on_entries()
+-- RETURNS trigger AS $$
+-- BEGIN
+--     RAISE EXCEPTION
+--       'pgledger_entries is immutable – % not allowed', TG_OP;
+-- END;
+-- $$ LANGUAGE plpgsql;
+-- CREATE TRIGGER pgledger_entries_nochange
+-- BEFORE UPDATE OR DELETE ON pgledger_entries
+-- FOR EACH ROW EXECUTE FUNCTION prevent_mutation_on_entries();
+
 CREATE OR REPLACE FUNCTION pgledger_create_account(
     name_param TEXT,
     currency_param TEXT,
