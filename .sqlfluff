@@ -1,0 +1,32 @@
+# https://docs.sqlfluff.com/en/stable/configuration/setting_configuration.html
+
+[sqlfluff]
+dialect = postgres
+max_line_length = 120
+
+# CPU processes to use while linting.
+# The default is "single threaded" to allow easy debugging, but this
+# is often undesirable at scale.
+# If positive, just implies number of processes.
+# If negative or zero, implies number_of_cpus - specified_number.
+# e.g. -1 means use all processors but one. 0 means all cpus.
+processes = -1
+
+[sqlfluff:indentation]
+# When addressing both indentation and line-length, implicit indents allow a
+# slightly more compact layout, without significant drawbacks in legibility.
+# They also enable a style much closer to some established style guides.
+# https://docs.sqlfluff.com/en/stable/configuration/layout.html#implicit-indents
+allow_implicit_indents = True
+
+# Capitalize keywords, types, etc but not our identifiers
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = upper
+[sqlfluff:rules:capitalisation.identifiers]
+extended_capitalisation_policy = lower
+[sqlfluff:rules:capitalisation.functions]
+extended_capitalisation_policy = lower
+[sqlfluff:rules:capitalisation.literals]
+capitalisation_policy = upper
+[sqlfluff:rules:capitalisation.types]
+extended_capitalisation_policy = upper

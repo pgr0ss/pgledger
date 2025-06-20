@@ -19,6 +19,12 @@ jobs:
 
       - uses: extractions/setup-just@v3
 
+      # For uvx sqlfluff
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
