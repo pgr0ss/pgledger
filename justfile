@@ -35,7 +35,7 @@ benchmark:
 performance_check duration='10s':
   cd go && go run performance_check.go --duration {{duration}}
 
-lint: deadcode modernize
+lint: deadcode modernize lint-sql
 
 deadcode:
   #!/usr/bin/env bash
@@ -53,5 +53,11 @@ deadcode:
 
 modernize:
   cd go && go run {{MODERNIZE_CMD}} -test ./...
+
+lint-sql:
+  uvx sqlfluff@latest lint --verbose
+
+format-sql:
+  uvx sqlfluff@latest format
 
 check: dbreset dbload clean tidy test lint

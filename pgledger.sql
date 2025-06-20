@@ -11,12 +11,12 @@ AS $$
         substring(uuid_send(gen_random_uuid()) from 9 for 8)
         , 'hex')::uuid
     from (select extract(epoch from clock_timestamp())*1000 as t_ms) s
-$$ LANGUAGE SQL VOLATILE;
+$$ LANGUAGE sql VOLATILE;
 
 CREATE FUNCTION pgledger_generate_id(prefix TEXT) RETURNS TEXT
 AS $$
     SELECT prefix || '_' || uuid_to_ulid(uuidv7_microsecond())
-$$ LANGUAGE SQL VOLATILE;
+$$ LANGUAGE sql VOLATILE;
 
 CREATE TABLE pgledger_accounts (
     id TEXT PRIMARY KEY DEFAULT pgledger_generate_id('pgla'),
@@ -32,20 +32,20 @@ CREATE TABLE pgledger_accounts (
 
 CREATE TABLE pgledger_transfers (
     id TEXT PRIMARY KEY DEFAULT pgledger_generate_id('pglt'),
-    from_account_id TEXT NOT NULL REFERENCES pgledger_accounts(id),
-    to_account_id TEXT NOT NULL REFERENCES pgledger_accounts(id),
+    from_account_id TEXT NOT NULL REFERENCES pgledger_accounts (id),
+    to_account_id TEXT NOT NULL REFERENCES pgledger_accounts (id),
     amount NUMERIC NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     CHECK (amount > 0 AND from_account_id != to_account_id)
 );
 
-CREATE INDEX ON pgledger_transfers(from_account_id);
-CREATE INDEX ON pgledger_transfers(to_account_id);
+CREATE INDEX ON pgledger_transfers (from_account_id);
+CREATE INDEX ON pgledger_transfers (to_account_id);
 
 CREATE TABLE pgledger_entries (
     id TEXT PRIMARY KEY DEFAULT pgledger_generate_id('pgle'),
-    account_id TEXT NOT NULL REFERENCES pgledger_accounts(id),
-    transfer_id TEXT NOT NULL REFERENCES pgledger_transfers(id),
+    account_id TEXT NOT NULL REFERENCES pgledger_accounts (id),
+    transfer_id TEXT NOT NULL REFERENCES pgledger_transfers (id),
     amount NUMERIC NOT NULL,
     account_previous_balance NUMERIC NOT NULL,
     account_current_balance NUMERIC NOT NULL,
@@ -53,8 +53,8 @@ CREATE TABLE pgledger_entries (
     created_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE INDEX ON pgledger_entries(account_id);
-CREATE INDEX ON pgledger_entries(transfer_id);
+CREATE INDEX ON pgledger_entries (account_id);
+CREATE INDEX ON pgledger_entries (transfer_id);
 
 CREATE OR REPLACE FUNCTION pgledger_create_account(
     name_param TEXT,
@@ -62,7 +62,17 @@ CREATE OR REPLACE FUNCTION pgledger_create_account(
     allow_negative_balance_param BOOLEAN DEFAULT TRUE,
     allow_positive_balance_param BOOLEAN DEFAULT TRUE
 )
-RETURNS TABLE(id TEXT, name TEXT, currency TEXT, balance NUMERIC, version BIGINT, allow_negative_balance BOOLEAN, allow_positive_balance BOOLEAN, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)
+RETURNS TABLE (
+    id TEXT,
+    name TEXT,
+    currency TEXT,
+    balance NUMERIC,
+    version BIGINT,
+    allow_negative_balance BOOLEAN,
+    allow_positive_balance BOOLEAN,
+    created_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ
+)
 AS $$
 BEGIN
     RETURN QUERY
@@ -75,7 +85,17 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION pgledger_get_account(id_param TEXT)
-RETURNS TABLE(id TEXT, name TEXT, currency TEXT, balance NUMERIC, version BIGINT, allow_negative_balance BOOLEAN, allow_positive_balance BOOLEAN, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)
+RETURNS TABLE (
+    id TEXT,
+    name TEXT,
+    currency TEXT,
+    balance NUMERIC,
+    version BIGINT,
+    allow_negative_balance BOOLEAN,
+    allow_positive_balance BOOLEAN,
+    created_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ
+)
 AS $$
 BEGIN
     RETURN QUERY
@@ -88,7 +108,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION pgledger_get_transfer(id_param TEXT)
-RETURNS TABLE(id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ)
+RETURNS TABLE (id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ)
 AS $$
 BEGIN
     RETURN QUERY
@@ -104,7 +124,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Helper function to check account balance constraints
-CREATE OR REPLACE FUNCTION pgledger_check_account_balance_constraints(account pgledger_accounts) RETURNS VOID AS $$
+CREATE OR REPLACE FUNCTION pgledger_check_account_balance_constraints(account PGLEDGER_ACCOUNTS) RETURNS VOID AS $$
 BEGIN
     -- If account doesn't allow negative balance and balance is negative, raise an error
     IF NOT account.allow_negative_balance AND (account.balance < 0) THEN
@@ -125,8 +145,10 @@ CREATE TYPE transfer_request AS (
     amount NUMERIC
 );
 
-CREATE OR REPLACE FUNCTION pgledger_create_transfer(from_account_id_param TEXT, to_account_id_param TEXT, amount_param NUMERIC)
-RETURNS TABLE(id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ)
+CREATE OR REPLACE FUNCTION pgledger_create_transfer(
+    from_account_id_param TEXT, to_account_id_param TEXT, amount_param NUMERIC
+)
+RETURNS TABLE (id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ)
 AS $$
 BEGIN
     -- Simply call pgledger_create_transfers with a single transfer
@@ -138,8 +160,8 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Function to create multiple transfers in a single transaction
-CREATE OR REPLACE FUNCTION pgledger_create_transfers(VARIADIC transfers transfer_request[])
-RETURNS TABLE(id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ)
+CREATE OR REPLACE FUNCTION pgledger_create_transfers(VARIADIC transfers TRANSFER_REQUEST [])
+RETURNS TABLE (id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ)
 AS $$
 DECLARE
     transfer transfer_request;
