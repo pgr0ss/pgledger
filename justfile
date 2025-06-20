@@ -55,7 +55,7 @@ modernize:
   cd go && go run {{MODERNIZE_CMD}} -test ./...
 
 lint-sql:
-  uvx sqlfluff lint
+  uvx sqlfluff lint --verbose
 
 format-sql:
   uvx sqlfluff format

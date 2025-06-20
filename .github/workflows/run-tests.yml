@@ -34,7 +34,7 @@ jobs:
       - name: Start Docker Compose
         run: docker compose up --wait
 
-      - name: Run Go tests
+      - name: Run tests and linters
         run: just --timestamp check
 
       - name: golangci-lint
