@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -473,4 +474,55 @@ func TestIdsAreMonotonic(t *testing.T) {
 	for _, row := range rows {
 		assert.Equal(t, row.I, row.RowNumber)
 	}
+}
+
+func TestFindHistoricalBalanceAtGivenTime(t *testing.T) {
+	conn := dbconn(t)
+	ctx := t.Context()
+
+	account1 := createAccount(ctx, t, conn, "account 1", "USD")
+	account2 := createAccount(ctx, t, conn, "account 2", "USD")
+
+	_ = createTransfer(ctx, t, conn, account1.ID, account2.ID, "10")
+	_ = createTransfer(ctx, t, conn, account1.ID, account2.ID, "20")
+	_ = createTransfer(ctx, t, conn, account1.ID, account2.ID, "50")
+
+	entries := getEntries(ctx, t, conn, account2.ID)
+	assert.Len(t, entries, 3)
+
+	// Normally, we would never update the ledger. But here I'm doing it to make testing easier.
+	_, err := conn.Exec(ctx, "update pgledger_entries set created_at = $1 where id = $2", "2025-06-01T12:00:00Z", entries[0].ID)
+	assert.NoError(t, err)
+	_, err = conn.Exec(ctx, "update pgledger_entries set created_at = $1 where id = $2", "2025-06-01T13:00:00Z", entries[1].ID)
+	assert.NoError(t, err)
+	_, err = conn.Exec(ctx, "update pgledger_entries set created_at = $1 where id = $2", "2025-06-01T14:00:00Z", entries[2].ID)
+	assert.NoError(t, err)
+
+	// Current balance
+	assert.Equal(t, "80", getAccount(ctx, t, conn, account2.ID).Balance)
+
+	// Historical balances
+	assert.Equal(t, "10", accountBalanceAtTime(t, conn, account2.ID, "2025-06-01T12:00:00Z"))
+	assert.Equal(t, "10", accountBalanceAtTime(t, conn, account2.ID, "2025-06-01T12:15:00Z"))
+	assert.Equal(t, "30", accountBalanceAtTime(t, conn, account2.ID, "2025-06-01T13:00:00Z"))
+	assert.Equal(t, "30", accountBalanceAtTime(t, conn, account2.ID, "2025-06-01T13:15:00Z"))
+	assert.Equal(t, "80", accountBalanceAtTime(t, conn, account2.ID, "2025-06-01T14:00:00Z"))
+	assert.Equal(t, "80", accountBalanceAtTime(t, conn, account2.ID, "2025-06-01T14:15:00Z"))
+}
+
+func accountBalanceAtTime(t *testing.T, conn *pgxpool.Pool, accountID string, datetime string) string {
+	rows, err := conn.Query(t.Context(), `
+		select account_current_balance
+		from pgledger_entries
+		where account_id = $1
+		and created_at <= $2
+		order by created_at desc
+		limit 1`,
+		accountID, datetime)
+	assert.NoError(t, err)
+
+	balance, err := pgx.CollectExactlyOneRow(rows, pgx.RowTo[string])
+	assert.NoError(t, err)
+
+	return balance
 }
