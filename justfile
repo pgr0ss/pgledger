@@ -55,9 +55,9 @@ modernize:
   cd go && go run {{MODERNIZE_CMD}} -test ./...
 
 lint-sql:
-  uvx sqlfluff lint --verbose
+  uvx sqlfluff@latest lint --verbose
 
 format-sql:
-  uvx sqlfluff format
+  uvx sqlfluff@latest format
 
 check: dbreset dbload clean tidy test lint
