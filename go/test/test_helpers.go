@@ -11,6 +11,7 @@ import (
 
 // Make an interface so I can use dbconn with both testing.T and testing.B
 type TestingT interface {
+	Context() context.Context
 	Cleanup(f func())
 	Errorf(format string, args ...any)
 	FailNow()
@@ -56,8 +57,8 @@ func dbconn(t TestingT) *pgxpool.Pool {
 	return dbpool
 }
 
-func createAccount(ctx context.Context, t TestingT, conn *pgxpool.Pool, name string, currency string) *Account {
-	rows, err := conn.Query(ctx, "select * from pgledger_create_account($1, $2)", name, currency)
+func createAccount(t TestingT, conn *pgxpool.Pool, name string, currency string) *Account {
+	rows, err := conn.Query(t.Context(), "select * from pgledger_create_account($1, $2)", name, currency)
 	assert.NoError(t, err)
 
 	account, err := pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[Account])
@@ -66,8 +67,8 @@ func createAccount(ctx context.Context, t TestingT, conn *pgxpool.Pool, name str
 	return account
 }
 
-func getAccount(ctx context.Context, t TestingT, conn *pgxpool.Pool, id string) *Account {
-	rows, err := conn.Query(ctx, "select * from pgledger_get_account($1)", id)
+func getAccount(t TestingT, conn *pgxpool.Pool, id string) *Account {
+	rows, err := conn.Query(t.Context(), "select * from pgledger_get_account($1)", id)
 	assert.NoError(t, err)
 
 	account, err := pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[Account])
@@ -76,8 +77,8 @@ func getAccount(ctx context.Context, t TestingT, conn *pgxpool.Pool, id string) 
 	return account
 }
 
-func getTransfer(ctx context.Context, t TestingT, conn *pgxpool.Pool, id string) *Transfer {
-	rows, err := conn.Query(ctx, "select * from pgledger_get_transfer($1)", id)
+func getTransfer(t TestingT, conn *pgxpool.Pool, id string) *Transfer {
+	rows, err := conn.Query(t.Context(), "select * from pgledger_get_transfer($1)", id)
 	assert.NoError(t, err)
 
 	transfer, err := pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[Transfer])
@@ -86,8 +87,8 @@ func getTransfer(ctx context.Context, t TestingT, conn *pgxpool.Pool, id string)
 	return transfer
 }
 
-func createTransfer(ctx context.Context, t TestingT, conn *pgxpool.Pool, fromAccountID, toAccountID, amount string) *Transfer {
-	transfer, err := createTransferReturnErr(ctx, conn, fromAccountID, toAccountID, amount)
+func createTransfer(t TestingT, conn *pgxpool.Pool, fromAccountID, toAccountID, amount string) *Transfer {
+	transfer, err := createTransferReturnErr(t.Context(), conn, fromAccountID, toAccountID, amount)
 	assert.NoError(t, err)
 
 	return transfer
@@ -107,8 +108,8 @@ func createTransferReturnErr(ctx context.Context, conn *pgxpool.Pool, fromAccoun
 	return transfer, nil
 }
 
-func getEntries(ctx context.Context, t TestingT, conn *pgxpool.Pool, accountID string) []Entry {
-	rows, err := conn.Query(ctx, "select * from pgledger_entries where account_id = $1 order by id", accountID)
+func getEntries(t TestingT, conn *pgxpool.Pool, accountID string) []Entry {
+	rows, err := conn.Query(t.Context(), "select * from pgledger_entries where account_id = $1 order by id", accountID)
 	assert.NoError(t, err)
 
 	entries, err := pgx.CollectRows(rows, pgx.RowToStructByName[Entry])
