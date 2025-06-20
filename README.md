@@ -2,7 +2,11 @@
 
 A [double entry ledger](https://en.wikipedia.org/wiki/Double-entry_bookkeeping) implementation in PostgreSQL.
 
-For more information on the background and rationale for this project, check out the blog post: [Ledger Implementation in PostgreSQL](https://pgrs.net/2025/03/24/pgledger-ledger-implementation-in-postgresql/).
+For more information on the background and rationale for this project, check out these blog posts:
+
+- [Ledger Implementation in PostgreSQL](https://pgrs.net/2025/03/24/pgledger-ledger-implementation-in-postgresql/)
+- [A Ledger In PostgreSQL Is Fast!](https://pgrs.net/2025/05/16/pgledger-in-postgresql-is-fast/)
+- [Double-Entry Ledgers: The Missing Primitive in Modern Software](https://pgrs.net/2025/06/17/double-entry-ledgers-missing-primitive-in-modern-software/)
 
 The implementation is currently in a single file: [pgledger.sql](/pgledger.sql).
 
