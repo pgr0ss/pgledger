@@ -498,10 +498,8 @@ func TestFindHistoricalBalanceAtGivenTime(t *testing.T) {
 	_, err = conn.Exec(ctx, "update pgledger_entries set created_at = $1 where id = $2", "2025-06-01T14:00:00Z", entries[2].ID)
 	assert.NoError(t, err)
 
-	foundAccount2 := getAccount(ctx, t, conn, account2.ID)
-
 	// Current balance
-	assert.Equal(t, "80", foundAccount2.Balance)
+	assert.Equal(t, "80", getAccount(ctx, t, conn, account2.ID).Balance)
 
 	// Historical balances
 	assert.Equal(t, "10", accountBalanceAtTime(t, conn, account2.ID, "2025-06-01T12:00:00Z"))
