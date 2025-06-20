@@ -1,5 +1,7 @@
 dbname := "pgledger"
 
+MODERNIZE_CMD := "golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest"
+
 psql:
   docker compose exec postgres env PGPASSWORD={{dbname}} psql -U {{dbname}} {{dbname}}
 
@@ -50,6 +52,6 @@ deadcode:
   fi
 
 modernize:
-  cd go && go tool modernize -test ./...
+  cd go && go run {{MODERNIZE_CMD}} -test ./...
 
 check: dbreset dbload clean tidy test lint
