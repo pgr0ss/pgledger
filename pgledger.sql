@@ -142,11 +142,12 @@ $$ LANGUAGE plpgsql;
 CREATE TYPE transfer_request AS (
     from_account_id TEXT,
     to_account_id TEXT,
-    amount NUMERIC
+    amount NUMERIC,
+    idempotency_key TEXT
 );
 
 CREATE OR REPLACE FUNCTION pgledger_create_transfer(
-    from_account_id_param TEXT, to_account_id_param TEXT, amount_param NUMERIC
+    from_account_id_param TEXT, to_account_id_param TEXT, amount_param NUMERIC, idempotency_key_param TEXT DEFAULT NULL
 )
 RETURNS TABLE (id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ)
 AS $$
@@ -154,7 +155,7 @@ BEGIN
     -- Simply call pgledger_create_transfers with a single transfer
     RETURN QUERY
     SELECT * FROM pgledger_create_transfers(
-        ROW(from_account_id_param, to_account_id_param, amount_param)::transfer_request
+        ROW(from_account_id_param, to_account_id_param, amount_param, idempotency_key_param)::transfer_request
     );
 END;
 $$ LANGUAGE plpgsql;
@@ -172,6 +173,8 @@ DECLARE
     from_account_id_param TEXT;
     to_account_id_param TEXT;
     amount_param NUMERIC;
+    idempotency_key_param TEXT;
+    existing_transfer pgledger_transfers;
     all_account_ids TEXT[] := '{}';
 BEGIN
     -- Collect all unique account IDs and sort them to prevent deadlocks
@@ -197,6 +200,7 @@ BEGIN
         from_account_id_param := transfer.from_account_id;
         to_account_id_param := transfer.to_account_id;
         amount_param := transfer.amount;
+        idempotency_key_param := transfer.idempotency_key;
 
         -- Preliminary checks
         IF amount_param <= 0 THEN
@@ -205,6 +209,28 @@ BEGIN
 
         IF from_account_id_param = to_account_id_param THEN
             RAISE EXCEPTION 'Cannot transfer to the same account (id=%)', from_account_id_param;
+        END IF;
+
+        -- If idempotency_key_param is provided, check if transfer already exists
+        IF idempotency_key_param IS NOT NULL THEN
+            -- Try to find existing transfer
+            SELECT * INTO existing_transfer
+            FROM pgledger_transfers
+            WHERE pgledger_transfers.id = idempotency_key_param;
+            
+            IF existing_transfer.id IS NOT NULL THEN
+                -- Verify the existing transfer matches the request
+                IF existing_transfer.from_account_id != from_account_id_param OR
+                   existing_transfer.to_account_id != to_account_id_param OR
+                   existing_transfer.amount != amount_param THEN
+                    RAISE EXCEPTION 'Transfer with idempotency key % already exists with different parameters', idempotency_key_param;
+                END IF;
+                -- Use existing transfer id
+                transfer_id := existing_transfer.id;
+                transfer_ids := array_append(transfer_ids, transfer_id);
+                -- Skip the rest of processing for this transfer
+                CONTINUE;
+            END IF;
         END IF;
 
         -- Update account balances
@@ -233,10 +259,16 @@ BEGIN
             RAISE EXCEPTION 'Cannot transfer between different currencies (% and %)', from_account.currency, to_account.currency;
         END IF;
 
-        -- Create transfer record
-        INSERT INTO pgledger_transfers (from_account_id, to_account_id, amount, created_at)
-        VALUES (from_account_id_param, to_account_id_param, amount_param, now())
-        RETURNING pgledger_transfers.id INTO transfer_id;
+        -- Create transfer record with optional idempotency key as id
+        IF idempotency_key_param IS NOT NULL THEN
+            INSERT INTO pgledger_transfers (id, from_account_id, to_account_id, amount, created_at)
+            VALUES (idempotency_key_param, from_account_id_param, to_account_id_param, amount_param, now())
+            RETURNING pgledger_transfers.id INTO transfer_id;
+        ELSE
+            INSERT INTO pgledger_transfers (from_account_id, to_account_id, amount, created_at)
+            VALUES (from_account_id_param, to_account_id_param, amount_param, now())
+            RETURNING pgledger_transfers.id INTO transfer_id;
+        END IF;
 
         transfer_ids := array_append(transfer_ids, transfer_id);
 
