@@ -68,7 +68,7 @@ func createAccount(t TestingT, conn *pgxpool.Pool, name string, currency string)
 }
 
 func getAccount(t TestingT, conn *pgxpool.Pool, id string) *Account {
-	rows, err := conn.Query(t.Context(), "select * from pgledger_get_account($1)", id)
+	rows, err := conn.Query(t.Context(), "select * from pgledger_accounts_view where id = $1", id)
 	assert.NoError(t, err)
 
 	account, err := pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[Account])
@@ -78,7 +78,7 @@ func getAccount(t TestingT, conn *pgxpool.Pool, id string) *Account {
 }
 
 func getTransfer(t TestingT, conn *pgxpool.Pool, id string) *Transfer {
-	rows, err := conn.Query(t.Context(), "select * from pgledger_get_transfer($1)", id)
+	rows, err := conn.Query(t.Context(), "select * from pgledger_transfers_view where id = $1", id)
 	assert.NoError(t, err)
 
 	transfer, err := pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[Transfer])
@@ -109,7 +109,7 @@ func createTransferReturnErr(ctx context.Context, conn *pgxpool.Pool, fromAccoun
 }
 
 func getEntries(t TestingT, conn *pgxpool.Pool, accountID string) []Entry {
-	rows, err := conn.Query(t.Context(), "select * from pgledger_entries where account_id = $1 order by id", accountID)
+	rows, err := conn.Query(t.Context(), "select * from pgledger_entries_view where account_id = $1 order by id", accountID)
 	assert.NoError(t, err)
 
 	entries, err := pgx.CollectRows(rows, pgx.RowToStructByName[Entry])
