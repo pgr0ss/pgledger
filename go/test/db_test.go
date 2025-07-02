@@ -29,7 +29,7 @@ func TestAccountsThatCannotBeNegative(t *testing.T) {
 	conn := dbconn(t)
 	ctx := t.Context()
 
-	rows, err := conn.Query(ctx, "select id from pgledger_create_account('positive-only', 'USD', allow_negative_balance_param => false)")
+	rows, err := conn.Query(ctx, "select id from pgledger_create_account('positive-only', 'USD', allow_negative_balance => false)")
 	assert.NoError(t, err)
 
 	account1ID, err := pgx.CollectExactlyOneRow(rows, pgx.RowTo[string])
@@ -51,7 +51,7 @@ func TestAccountsThatCannotBePositive(t *testing.T) {
 	conn := dbconn(t)
 	ctx := t.Context()
 
-	rows, err := conn.Query(ctx, `SELECT id FROM pgledger_create_account('negative-only', 'USD', allow_positive_balance_param => false)`)
+	rows, err := conn.Query(ctx, `SELECT id FROM pgledger_create_account('negative-only', 'USD', allow_positive_balance => false)`)
 	assert.NoError(t, err)
 
 	account1ID, err := pgx.CollectExactlyOneRow(rows, pgx.RowTo[string])
@@ -137,7 +137,7 @@ func TestMultipleTransfersRollsBackIfOneIsBad(t *testing.T) {
 	account1 := createAccount(t, conn, "account 1", "USD")
 	account2 := createAccount(t, conn, "account 2", "USD")
 
-	rows, err := conn.Query(ctx, "select id from pgledger_create_account('negative-only', 'USD', allow_positive_balance_param => false)")
+	rows, err := conn.Query(ctx, "select id from pgledger_create_account('negative-only', 'USD', allow_positive_balance => false)")
 	assert.NoError(t, err)
 
 	account3ID, err := pgx.CollectExactlyOneRow(rows, pgx.RowTo[string])
@@ -193,7 +193,7 @@ func TestCreateMultipleTransfersRollbackOnFailure(t *testing.T) {
 
 	account1 := createAccount(t, conn, "account 1", "USD")
 
-	rows, err := conn.Query(ctx, "select id from pgledger_create_account('positive-only', 'USD', allow_negative_balance_param => false)")
+	rows, err := conn.Query(ctx, "select id from pgledger_create_account('positive-only', 'USD', allow_negative_balance => false)")
 	assert.NoError(t, err)
 
 	positiveOnlyAccountID, err := pgx.CollectExactlyOneRow(rows, pgx.RowTo[string])
