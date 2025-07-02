@@ -36,11 +36,13 @@ CREATE TABLE pgledger_transfers (
     to_account_id TEXT NOT NULL REFERENCES pgledger_accounts (id),
     amount NUMERIC NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
+    event_at TIMESTAMPTZ NOT NULL,
     CHECK (amount > 0 AND from_account_id != to_account_id)
 );
 
 CREATE INDEX ON pgledger_transfers (from_account_id);
 CREATE INDEX ON pgledger_transfers (to_account_id);
+CREATE INDEX ON pgledger_transfers (event_at);
 
 CREATE TABLE pgledger_entries (
     id TEXT PRIMARY KEY DEFAULT pgledger_generate_id('pgle'),
@@ -75,20 +77,23 @@ SELECT
     from_account_id,
     to_account_id,
     amount,
-    created_at
+    created_at,
+    event_at
 FROM pgledger_transfers;
 
 CREATE VIEW pgledger_entries_view AS
 SELECT
-    id,
-    account_id,
-    transfer_id,
-    amount,
-    account_previous_balance,
-    account_current_balance,
-    account_version,
-    created_at
-FROM pgledger_entries;
+    e.id,
+    e.account_id,
+    e.transfer_id,
+    e.amount,
+    e.account_previous_balance,
+    e.account_current_balance,
+    e.account_version,
+    e.created_at,
+    t.event_at
+FROM pgledger_entries AS e
+INNER JOIN pgledger_transfers AS t ON e.transfer_id = t.id;
 
 CREATE OR REPLACE FUNCTION pgledger_create_account(
     name TEXT,
@@ -129,7 +134,10 @@ CREATE TYPE transfer_request AS (
 );
 
 CREATE OR REPLACE FUNCTION pgledger_create_transfer(
-    from_account_id TEXT, to_account_id TEXT, amount NUMERIC
+    from_account_id TEXT,
+    to_account_id TEXT,
+    amount NUMERIC,
+    event_at TIMESTAMPTZ DEFAULT NULL
 )
 RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
 AS $$
@@ -137,13 +145,26 @@ BEGIN
     -- Simply call pgledger_create_transfers with a single transfer
     RETURN QUERY
     SELECT * FROM pgledger_create_transfers(
+        event_at,
         ROW(from_account_id, to_account_id, amount)::transfer_request
     );
 END;
 $$ LANGUAGE plpgsql;
 
--- Function to create multiple transfers in a single transaction
+-- Function to create multiple transfers in a single transaction without an event_at
 CREATE OR REPLACE FUNCTION pgledger_create_transfers(VARIADIC transfer_requests TRANSFER_REQUEST [])
+RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT * FROM pgledger_create_transfers(null::TIMESTAMPTZ, VARIADIC transfer_requests);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION pgledger_create_transfers(
+    event_at TIMESTAMPTZ,
+    VARIADIC transfer_requests TRANSFER_REQUEST []
+)
 RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
 AS $$
 DECLARE
@@ -212,8 +233,8 @@ BEGIN
         END IF;
 
         -- Create transfer record
-        INSERT INTO pgledger_transfers (from_account_id, to_account_id, amount, created_at)
-        VALUES (transfer_request.from_account_id, transfer_request.to_account_id, transfer_request.amount, now())
+        INSERT INTO pgledger_transfers (from_account_id, to_account_id, amount, created_at, event_at)
+        VALUES (transfer_request.from_account_id, transfer_request.to_account_id, transfer_request.amount, now(), coalesce(event_at, now()))
         RETURNING pgledger_transfers.id INTO transfer_id;
 
         transfer_ids := array_append(transfer_ids, transfer_id);

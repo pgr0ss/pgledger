@@ -35,6 +35,7 @@ type Transfer struct {
 	ToAccountID   string
 	Amount        string
 	CreatedAt     time.Time
+	EventAt       time.Time
 }
 
 type Entry struct {
@@ -46,6 +47,7 @@ type Entry struct {
 	AccountCurrentBalance  string
 	AccountVersion         int
 	CreatedAt              time.Time
+	EventAt                time.Time
 }
 
 func dbconn(t TestingT) *pgxpool.Pool {
