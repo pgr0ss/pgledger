@@ -48,6 +48,47 @@ select created_at, account_version, amount, account_previous_balance, account_cu
 (2 rows)
 ```
 
+### Event Timestamp
+
+Transfers take an optional `event_at`, which should be used to record when the ledgerable event occurred if it is not now. For example, if you are recording ledger transfers in response to webhooks (such as money arriving in your bank account), then you can set the `event_at` to be the timestamp from the webhook.
+
+If `event_at` is not provided, it is defaulted to `now()`, the same as the `created_at`:
+
+```sql
+-- No explicit event_at, so event_at == created_at:
+select created_at, event_at from pgledger_create_transfer($account_1_id, $account_2_id, 12.34);
+
+          created_at           |           event_at
+-------------------------------+-------------------------------
+ 2025-07-02 23:35:56.666739+00 | 2025-07-02 23:35:56.666739+00
+
+-- With explicit event_at:
+select created_at, event_at from pgledger_create_transfer($account_1_id, $account_2_id, 12.34, '2025-07-01T12:34:56Z');
+
+          created_at           |        event_at
+-------------------------------+------------------------
+ 2025-07-02 23:36:16.511164+00 | 2025-07-01 12:34:56+00
+
+-- Or with the => syntax:
+select created_at, event_at from pgledger_create_transfer($account_1_id, $account_2_id, 12.34, event_at => '2025-07-01T12:34:56Z');
+```
+
+The `event_at` provides extra information in the ledger about when the real-world events happened, which may be far in the past. And it can help when querying entries for a defined time period.
+
+For example, let's say you have a ledger account which represents a real-world bank account. When the bank sends you webhooks, you record ledger transfers. The ledger account history should match the bank account history.
+
+Now say that on July 1 at 12:05 am you receive a webhook that money arrived in the account on June 30 at 11:55 pm. You record the ledger transfer, but the `created_at` is now `2025-07-01T00:05:00Z`. When you get the June bank statement, it will include this transfer, but when you query your ledger for transfers in June, it will not.
+
+This is where even though you received the webhook on July 1, it should contain the timestamp of the event itself, so you can set that as the `event_at` in the ledger transfer. Now, when comparing ledger transfers or entries against the bank statement, you can query for all transfers where the `event_at` is in June, not the `created_at`:
+
+```sql
+select * from pgledger_entries_view
+where account_id = $account_id
+and event_at >= '2025-06-01'
+and event_at < '2025-07-01'
+order by event_at;
+```
+
 ### Currencies
 
 Each account is single currency. If you want to maintain balances in multiple currencies, use multiple accounts.
@@ -155,4 +196,6 @@ Bytes/transfer: 743
 - Add a function to get account balance at a specific point in time (select balance from most recent entry before the time)
 - Potential performance improvements
   - Since ULIDs have embedded time, do we need created_at columns? Could we use a virtual generated column instead?
+  - We could also deconstruct the ULID and store it as a UUID, but would need a special type or view to reconstruct the prefixed ULID form
   - Do we need from/to accounts on transfers? Could we make a queryable view for transfers instead which queries from the entries?
+  - If event_date is not provided, we could store it as null (saving 8 bytes?), and then update the view to do a `COALESCE(event_at, created_at)`. We would need an index on the COALESCE statement, so not sure how much it would actually save

@@ -101,6 +101,89 @@ func TestCreateTransfer(t *testing.T) {
 	assert.Greater(t, foundAccount2.UpdatedAt, foundAccount2.CreatedAt)
 }
 
+func TestCreateTransferWithAndWithoutEventAt(t *testing.T) {
+	conn := dbconn(t)
+	ctx := t.Context()
+
+	account1 := createAccount(t, conn, "account 1", "USD")
+	account2 := createAccount(t, conn, "account 2", "USD")
+
+	eventAt, err := time.Parse(time.RFC3339, "2025-07-01T12:34:56Z")
+	assert.NoError(t, err)
+
+	_, err = conn.Exec(ctx, "select pgledger_create_transfer($1, $2, 10)", account1.ID, account2.ID)
+	assert.NoError(t, err)
+
+	_, err = conn.Exec(ctx, "select pgledger_create_transfer($1, $2, 10, $3)", account1.ID, account2.ID, eventAt)
+	assert.NoError(t, err)
+
+	_, err = conn.Exec(ctx, "select pgledger_create_transfer($1, $2, 10, event_at => $3)", account1.ID, account2.ID, eventAt)
+	assert.NoError(t, err)
+
+	rows, err := conn.Query(ctx, "select * from pgledger_transfers where from_account_id = $1", account1.ID)
+	assert.NoError(t, err)
+
+	transfers, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[Transfer])
+	assert.NoError(t, err)
+
+	assert.Len(t, transfers, 3)
+
+	assert.WithinDuration(t, time.Now(), transfers[0].CreatedAt, time.Minute)
+	assert.WithinDuration(t, time.Now(), transfers[1].CreatedAt, time.Minute)
+	assert.WithinDuration(t, time.Now(), transfers[2].CreatedAt, time.Minute)
+
+	assert.Equal(t, transfers[0].CreatedAt, transfers[0].EventAt) // Defaults to now(), matching created_at
+	assert.Equal(t, eventAt, transfers[1].EventAt.UTC())
+	assert.Equal(t, eventAt, transfers[2].EventAt.UTC())
+
+	// Entries view also has EventAt field
+	entries := getEntries(t, conn, account1.ID)
+	assert.NoError(t, err)
+	assert.Len(t, entries, 3)
+
+	assert.Equal(t, entries[0].CreatedAt, entries[0].EventAt)
+	assert.Equal(t, eventAt, entries[1].EventAt.UTC())
+	assert.Equal(t, eventAt, entries[2].EventAt.UTC())
+}
+
+func TestCreateTransfersWithAndWithoutEventAt(t *testing.T) {
+	conn := dbconn(t)
+	ctx := t.Context()
+
+	account1 := createAccount(t, conn, "account 1", "USD")
+	account2 := createAccount(t, conn, "account 2", "USD")
+
+	eventAt, err := time.Parse(time.RFC3339, "2025-07-01T12:34:56Z")
+	assert.NoError(t, err)
+
+	_, err = conn.Exec(ctx, "select pgledger_create_transfers(($1, $2, 10))", account1.ID, account2.ID)
+	assert.NoError(t, err)
+
+	_, err = conn.Exec(ctx, "select pgledger_create_transfers($3::timestamptz, ($1, $2, 10))", account1.ID, account2.ID, eventAt)
+	assert.NoError(t, err)
+
+	_, err = conn.Exec(ctx, "select pgledger_create_transfers($3::timestamptz, ($1, $2, 10), ($1, $2, 10))", account1.ID, account2.ID, eventAt)
+	assert.NoError(t, err)
+
+	rows, err := conn.Query(ctx, "select * from pgledger_transfers where from_account_id = $1", account1.ID)
+	assert.NoError(t, err)
+
+	transfers, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[Transfer])
+	assert.NoError(t, err)
+
+	assert.Len(t, transfers, 4)
+
+	assert.WithinDuration(t, time.Now(), transfers[0].CreatedAt, time.Minute)
+	assert.WithinDuration(t, time.Now(), transfers[1].CreatedAt, time.Minute)
+	assert.WithinDuration(t, time.Now(), transfers[2].CreatedAt, time.Minute)
+	assert.WithinDuration(t, time.Now(), transfers[3].CreatedAt, time.Minute)
+
+	assert.Equal(t, transfers[0].CreatedAt, transfers[0].EventAt) // Defaults to now(), matching created_at
+	assert.Equal(t, eventAt, transfers[1].EventAt.UTC())
+	assert.Equal(t, eventAt, transfers[2].EventAt.UTC())
+	assert.Equal(t, eventAt, transfers[3].EventAt.UTC())
+}
+
 func TestCreateMultipleTransfers(t *testing.T) {
 	conn := dbconn(t)
 	ctx := t.Context()
@@ -252,6 +335,7 @@ func TestEntries(t *testing.T) {
 	assert.Equal(t, "-5", entries[0].AccountCurrentBalance)
 	assert.Equal(t, 1, entries[0].AccountVersion)
 	assert.WithinDuration(t, time.Now(), entries[0].CreatedAt, time.Minute)
+	assert.Equal(t, entries[0].CreatedAt, entries[0].EventAt)
 
 	assert.Regexp(t, "^pgle_\\w+$", entries[1].ID)
 	assert.Equal(t, t2.ID, entries[1].TransferID)
@@ -260,6 +344,7 @@ func TestEntries(t *testing.T) {
 	assert.Equal(t, "-15", entries[1].AccountCurrentBalance)
 	assert.Equal(t, 2, entries[1].AccountVersion)
 	assert.WithinDuration(t, time.Now(), entries[1].CreatedAt, time.Minute)
+	assert.Equal(t, entries[1].CreatedAt, entries[1].EventAt)
 
 	assert.Regexp(t, "^pgle_\\w+$", entries[2].ID)
 	assert.Equal(t, t3.ID, entries[2].TransferID)
@@ -268,6 +353,7 @@ func TestEntries(t *testing.T) {
 	assert.Equal(t, "5", entries[2].AccountCurrentBalance)
 	assert.Equal(t, 3, entries[2].AccountVersion)
 	assert.WithinDuration(t, time.Now(), entries[2].CreatedAt, time.Minute)
+	assert.Equal(t, entries[2].CreatedAt, entries[2].EventAt)
 
 	entries = getEntries(t, conn, account2.ID)
 
@@ -280,6 +366,7 @@ func TestEntries(t *testing.T) {
 	assert.Equal(t, "5", entries[0].AccountCurrentBalance)
 	assert.Equal(t, 1, entries[0].AccountVersion)
 	assert.WithinDuration(t, time.Now(), entries[0].CreatedAt, time.Minute)
+	assert.Equal(t, entries[0].CreatedAt, entries[0].EventAt)
 
 	assert.Regexp(t, "^pgle_\\w+$", entries[1].ID)
 	assert.Equal(t, t2.ID, entries[1].TransferID)
@@ -288,6 +375,7 @@ func TestEntries(t *testing.T) {
 	assert.Equal(t, "15", entries[1].AccountCurrentBalance)
 	assert.Equal(t, 2, entries[1].AccountVersion)
 	assert.WithinDuration(t, time.Now(), entries[1].CreatedAt, time.Minute)
+	assert.Equal(t, entries[1].CreatedAt, entries[1].EventAt)
 
 	assert.Regexp(t, "^pgle_\\w+$", entries[2].ID)
 	assert.Equal(t, t3.ID, entries[2].TransferID)
@@ -296,6 +384,7 @@ func TestEntries(t *testing.T) {
 	assert.Equal(t, "-5", entries[2].AccountCurrentBalance)
 	assert.Equal(t, 3, entries[2].AccountVersion)
 	assert.WithinDuration(t, time.Now(), entries[2].CreatedAt, time.Minute)
+	assert.Equal(t, entries[2].CreatedAt, entries[2].EventAt)
 }
 
 func TestTransferAmountsArePositive(t *testing.T) {
