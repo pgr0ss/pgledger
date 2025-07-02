@@ -56,70 +56,53 @@ CREATE TABLE pgledger_entries (
 CREATE INDEX ON pgledger_entries (account_id);
 CREATE INDEX ON pgledger_entries (transfer_id);
 
+CREATE VIEW pgledger_accounts_view AS
+SELECT
+    id,
+    name,
+    currency,
+    balance,
+    version,
+    allow_negative_balance,
+    allow_positive_balance,
+    created_at,
+    updated_at
+FROM pgledger_accounts;
+
+CREATE VIEW pgledger_transfers_view AS
+SELECT
+    id,
+    from_account_id,
+    to_account_id,
+    amount,
+    created_at
+FROM pgledger_transfers;
+
+CREATE VIEW pgledger_entries_view AS
+SELECT
+    id,
+    account_id,
+    transfer_id,
+    amount,
+    account_previous_balance,
+    account_current_balance,
+    account_version,
+    created_at
+FROM pgledger_entries;
+
 CREATE OR REPLACE FUNCTION pgledger_create_account(
     name_param TEXT,
     currency_param TEXT,
     allow_negative_balance_param BOOLEAN DEFAULT TRUE,
     allow_positive_balance_param BOOLEAN DEFAULT TRUE
 )
-RETURNS TABLE (
-    id TEXT,
-    name TEXT,
-    currency TEXT,
-    balance NUMERIC,
-    version BIGINT,
-    allow_negative_balance BOOLEAN,
-    allow_positive_balance BOOLEAN,
-    created_at TIMESTAMPTZ,
-    updated_at TIMESTAMPTZ
-)
+RETURNS SETOF PGLEDGER_ACCOUNTS_VIEW
 AS $$
 BEGIN
     RETURN QUERY
     INSERT INTO pgledger_accounts (name, currency, allow_negative_balance, allow_positive_balance, created_at, updated_at)
     VALUES (name_param, currency_param, allow_negative_balance_param, allow_positive_balance_param, now(), now())
-    RETURNING pgledger_accounts.id, pgledger_accounts.name, pgledger_accounts.currency, pgledger_accounts.balance, pgledger_accounts.version,
-              pgledger_accounts.allow_negative_balance, pgledger_accounts.allow_positive_balance,
-              pgledger_accounts.created_at, pgledger_accounts.updated_at;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE OR REPLACE FUNCTION pgledger_get_account(id_param TEXT)
-RETURNS TABLE (
-    id TEXT,
-    name TEXT,
-    currency TEXT,
-    balance NUMERIC,
-    version BIGINT,
-    allow_negative_balance BOOLEAN,
-    allow_positive_balance BOOLEAN,
-    created_at TIMESTAMPTZ,
-    updated_at TIMESTAMPTZ
-)
-AS $$
-BEGIN
-    RETURN QUERY
-    SELECT pgledger_accounts.id, pgledger_accounts.name, pgledger_accounts.currency, pgledger_accounts.balance, pgledger_accounts.version,
-           pgledger_accounts.allow_negative_balance, pgledger_accounts.allow_positive_balance,
-           pgledger_accounts.created_at, pgledger_accounts.updated_at
-    FROM pgledger_accounts
-    WHERE pgledger_accounts.id = id_param;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE OR REPLACE FUNCTION pgledger_get_transfer(id_param TEXT)
-RETURNS TABLE (id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ)
-AS $$
-BEGIN
-    RETURN QUERY
-    SELECT
-        t.id,
-        t.from_account_id,
-        t.to_account_id,
-        t.amount,
-        t.created_at
-    FROM pgledger_transfers t
-    WHERE t.id = id_param;
+    RETURNING *;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -148,7 +131,7 @@ CREATE TYPE transfer_request AS (
 CREATE OR REPLACE FUNCTION pgledger_create_transfer(
     from_account_id_param TEXT, to_account_id_param TEXT, amount_param NUMERIC
 )
-RETURNS TABLE (id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ)
+RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
 AS $$
 BEGIN
     -- Simply call pgledger_create_transfers with a single transfer
@@ -161,7 +144,7 @@ $$ LANGUAGE plpgsql;
 
 -- Function to create multiple transfers in a single transaction
 CREATE OR REPLACE FUNCTION pgledger_create_transfers(VARIADIC transfers TRANSFER_REQUEST [])
-RETURNS TABLE (id TEXT, from_account_id TEXT, to_account_id TEXT, amount NUMERIC, created_at TIMESTAMPTZ)
+RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
 AS $$
 DECLARE
     transfer transfer_request;
@@ -251,14 +234,9 @@ BEGIN
 
     -- Return all created transfers
     RETURN QUERY
-    SELECT
-        t.id,
-        t.from_account_id,
-        t.to_account_id,
-        t.amount,
-        t.created_at
-    FROM pgledger_transfers t
-    WHERE t.id = ANY(transfer_ids)
-    ORDER BY t.id;
+    SELECT *
+    FROM pgledger_transfers_view
+    WHERE id = ANY(transfer_ids)
+    ORDER BY id;
 END;
 $$ LANGUAGE plpgsql;

@@ -29,7 +29,7 @@ select * from pgledger_create_transfer($account_1_id, $account_2_id, 56.78);
 See updated balances:
 
 ```sql
-select name, balance, version from pgledger_get_account($account_2_id);
+select name, balance, version from pgledger_accounts_view where id = $account_2_id;
 
    name    | balance | version
 -----------+---------+---------
@@ -39,7 +39,7 @@ select name, balance, version from pgledger_get_account($account_2_id);
 See ledger entries:
 
 ```sql
-select created_at, account_version, amount, account_previous_balance, account_current_balance from pgledger_entries where account_id = $account_2_id order by id;
+select created_at, account_version, amount, account_previous_balance, account_current_balance from pgledger_entries_view where account_id = $account_2_id order by id;
 
           created_at           | account_version | amount | account_previous_balance | account_current_balance
 -------------------------------+-----------------+--------+--------------------------+-------------------------
