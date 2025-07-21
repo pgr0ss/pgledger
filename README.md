@@ -12,6 +12,10 @@ The implementation is currently in a single file: [pgledger.sql](/pgledger.sql).
 
 ## Usage
 
+`pgledger` is primarily a set of functions and views. The ledger is appended via functions (such as creating accounts and transfers) and is queried via views (which present the underlying tables in friendly ways).
+
+For more detailed usage guides, check out the [examples](examples) directory. Each sql file is executable, and its output is stored in the corresponding `.sql.out` file. This file allows you to read the comments, the sql commands, and the output of those commands in one place.
+
 Set up your accounts:
 
 ```sql
@@ -179,7 +183,8 @@ Bytes/transfer: 743
 
 ## TODO
 
-- Make the transfer and account views include the account names as well as the ids
+- Make the transfer view include the currency and account names as well as the ids
+  - Update the multi-currency example to show the transfers for a conversion
 - Make create_transfers function return account balances as well
 - Add metadata to accounts and transfers - json column?
   - Once we have transfer metadata, update receivables example to show how we can group by payment_id to see when incoming and outgoing don't match
