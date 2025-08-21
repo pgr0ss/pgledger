@@ -21,9 +21,6 @@
     "gomodUpdateImportPaths"
   ],
   "prConcurrentLimit": 0,
-  "repositories": [
-    "pgr0ss/pgledger"
-  ],
   "lockFileMaintenance": {
     "enabled": true
   }
