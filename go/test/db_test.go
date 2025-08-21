@@ -165,23 +165,37 @@ func TestCreateTransfersWithAndWithoutEventAt(t *testing.T) {
 	_, err = conn.Exec(ctx, "select pgledger_create_transfers($3::timestamptz, ($1, $2, 10), ($1, $2, 10))", account1.ID, account2.ID, eventAt)
 	assert.NoError(t, err)
 
+	// With named parameters
+	_, err = conn.Exec(ctx, `select pgledger_create_transfers(
+			event_at => $3,
+ 			variadic transfer_requests => array[
+				($1, $2, '30'),
+				($1, $2, '40')
+			]::transfer_request[])`,
+		account1.ID, account2.ID, eventAt)
+	assert.NoError(t, err)
+
 	rows, err := conn.Query(ctx, "select * from pgledger_transfers where from_account_id = $1", account1.ID)
 	assert.NoError(t, err)
 
 	transfers, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[Transfer])
 	assert.NoError(t, err)
 
-	assert.Len(t, transfers, 4)
+	assert.Len(t, transfers, 6)
 
 	assert.WithinDuration(t, time.Now(), transfers[0].CreatedAt, time.Minute)
 	assert.WithinDuration(t, time.Now(), transfers[1].CreatedAt, time.Minute)
 	assert.WithinDuration(t, time.Now(), transfers[2].CreatedAt, time.Minute)
 	assert.WithinDuration(t, time.Now(), transfers[3].CreatedAt, time.Minute)
+	assert.WithinDuration(t, time.Now(), transfers[4].CreatedAt, time.Minute)
+	assert.WithinDuration(t, time.Now(), transfers[5].CreatedAt, time.Minute)
 
 	assert.Equal(t, transfers[0].CreatedAt, transfers[0].EventAt) // Defaults to now(), matching created_at
 	assert.Equal(t, eventAt, transfers[1].EventAt.UTC())
 	assert.Equal(t, eventAt, transfers[2].EventAt.UTC())
 	assert.Equal(t, eventAt, transfers[3].EventAt.UTC())
+	assert.Equal(t, eventAt, transfers[4].EventAt.UTC())
+	assert.Equal(t, eventAt, transfers[5].EventAt.UTC())
 }
 
 func TestCreateMultipleTransfers(t *testing.T) {
