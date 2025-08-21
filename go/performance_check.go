@@ -73,12 +73,10 @@ func main() {
 	runCtx, cancel := context.WithTimeout(ctx, runDuration)
 	defer cancel()
 
-	wg.Add(numWorkers)
 	startTime := time.Now()
 
 	for range numWorkers {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				select {
 				case <-runCtx.Done():
@@ -96,7 +94,7 @@ func main() {
 					}
 				}
 			}
-		}()
+		})
 	}
 
 	fmt.Printf("Waiting for workers to finish (up to %s)...\n", runDuration)

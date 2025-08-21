@@ -477,21 +477,18 @@ func TestConcurrency(t *testing.T) {
 	account2 := createAccount(t, conn, "account 2", "USD")
 
 	var wg sync.WaitGroup
-	wg.Add(2)
 
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for range 500 {
 			_ = createTransfer(t, conn, account1.ID, account2.ID, "100")
 		}
-	}()
+	})
 
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for range 500 {
 			_ = createTransfer(t, conn, account2.ID, account1.ID, "100")
 		}
-	}()
+	})
 
 	// Wait for all goroutines to complete
 	wg.Wait()
@@ -516,27 +513,24 @@ func TestConcurrencyWithCurrencyExchange(t *testing.T) {
 	liquidityEUR := createAccount(t, conn, "liquidity.EUR", "EUR")
 
 	var wg sync.WaitGroup
-	wg.Add(2)
 
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for range 500 {
 			_, err := conn.Exec(ctx,
 				"select * from pgledger_create_transfers(($1, $2, '10.00'), ($3, $4, '9.26'))",
 				userUSD.ID, liquidityUSD.ID, liquidityEUR.ID, userEUR.ID)
 			assert.NoError(t, err)
 		}
-	}()
+	})
 
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for range 500 {
 			_, err := conn.Exec(ctx,
 				"select * from pgledger_create_transfers(($1, $2, '9.26'), ($3, $4, '10.00'))",
 				userEUR.ID, liquidityEUR.ID, liquidityUSD.ID, userUSD.ID)
 			assert.NoError(t, err)
 		}
-	}()
+	})
 
 	// Wait for all goroutines to complete
 	wg.Wait()
