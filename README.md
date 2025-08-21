@@ -179,9 +179,10 @@ Bytes/transfer: 743
 
 ## TODO
 
-- Add effective date to transfers (for when the transfer is recorded now, but it's related to something from the past)
+- Make the transfer and account views include the account names as well as the ids
 - Make create_transfers function return account balances as well
 - Add metadata to accounts and transfers - json column?
+  - Once we have transfer metadata, update receivables example to show how we can group by payment_id to see when incoming and outgoing don't match
 - Query via versioned views
   - `select * from pgledger_transfers_v1`
   - This way I can iterate on the underlying tables without breaking queries
