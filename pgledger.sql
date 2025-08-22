@@ -92,8 +92,8 @@ SELECT
     e.account_version,
     e.created_at,
     t.event_at
-FROM pgledger_entries AS e
-INNER JOIN pgledger_transfers AS t ON e.transfer_id = t.id;
+FROM pgledger_entries e
+INNER JOIN pgledger_transfers t ON e.transfer_id = t.id;
 
 CREATE OR REPLACE FUNCTION pgledger_create_account(
     name TEXT,
@@ -162,8 +162,8 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION pgledger_create_transfers(
-    event_at TIMESTAMPTZ,
-    VARIADIC transfer_requests TRANSFER_REQUEST []
+    event_at TIMESTAMPTZ DEFAULT NULL,
+    VARIADIC transfer_requests TRANSFER_REQUEST [] DEFAULT '{}'
 )
 RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
 AS $$

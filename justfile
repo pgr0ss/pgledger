@@ -60,4 +60,20 @@ lint-sql:
 format-sql:
   uvx sqlfluff@latest format
 
-check: dbreset dbload clean tidy test lint
+check: dbreset clean tidy test lint
+
+run-examples: dbreset
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  for file in $(ls examples/*.sql); do
+    out="${file}.out"
+
+    echo '-- This file contains the sql queries plus their output, but we set the filetype to sql for better syntax highlighting' > $out
+    echo "-- vim: set filetype=sql:" >> $out
+    echo >> $out
+
+    cat "$file" | \
+      docker compose exec --no-TTY postgres psql -U pgledger --echo-all --no-psqlrc \
+      >> $out 2>&1
+  done
