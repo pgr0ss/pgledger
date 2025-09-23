@@ -55,12 +55,12 @@ modernize:
   cd go && go run {{MODERNIZE_CMD}} -test ./...
 
 lint-sql:
-  uvx sqlfluff@latest lint --verbose
+  uvx sqlfluff@3.5.0 lint --verbose
 
 format-sql:
-  uvx sqlfluff@latest format
+  uvx sqlfluff@3.5.0 format
 
-check: dbreset clean tidy test lint
+check: dbreset clean tidy format-sql test lint
 
 run-examples: dbreset
   #!/usr/bin/env bash

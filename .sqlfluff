@@ -42,3 +42,9 @@ extended_capitalisation_policy = upper
 [sqlfluff:layout:type:colon]
 spacing_before = touch
 spacing_after = touch
+
+# This allows these unreserved keywords to be used as column names
+#   https://docs.sqlfluff.com/en/stable/reference/rules.html#rule-references.keywords
+#   https://www.postgresql.org/docs/current/sql-keywords-appendix.html
+[sqlfluff:rules:references.keywords]
+ignore_words = name, version
