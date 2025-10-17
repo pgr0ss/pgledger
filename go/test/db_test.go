@@ -548,7 +548,7 @@ func TestIdsAreMonotonic(t *testing.T) {
 	// This query generates a series of ids, and then checks their sort order
 	// against the order in which they were generated
 	sql := `select i, id, row_number() over(order by id) from
-   (select i, pgledger_generate_id('prefix') as id from generate_series(1, 20) as i)
+   (select i, pgledger_generate_id('prefix') as id from generate_series(1, 20) as i) as series
    order by i;`
 	result, err := conn.Query(ctx, sql)
 	assert.NoError(t, err)
