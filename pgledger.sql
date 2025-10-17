@@ -1,9 +1,16 @@
+-- uuidv7 is a new function in PostgreSQL 18:
+-- https://www.postgresql.org/docs/release/18.0/
+CREATE FUNCTION pgledger_uuidv7_exists() RETURNS BOOL
+AS $$
+    SELECT EXISTS(SELECT * FROM pg_proc WHERE proname = 'uuidv7');
+$$ LANGUAGE sql IMMUTABLE;
+
 -- Function to generate uuidv7 at microsecond precision. It's not monotonic,
 -- but hopefully close enough at microsecond precision.
 --   From: https://postgresql.verite.pro/blog/2024/07/15/uuid-v7-pure-sql.html
--- This can be replaced by the builtin uuidv7() function when it's released in
--- PostgreSQL 18. That one will will be monotonic.
-CREATE FUNCTION uuidv7_microsecond() RETURNS UUID
+-- This will only be used in PostgreSQL versions below 18 when the builtin
+-- uuidv7() function does not exist (which is monotonic).
+CREATE FUNCTION pgledger_uuidv7_microsecond() RETURNS UUID
 AS $$
     select encode(
         substring(int8send(floor(t_ms)::int8) from 3) ||
@@ -13,9 +20,23 @@ AS $$
     from (select extract(epoch from clock_timestamp())*1000 as t_ms) s
 $$ LANGUAGE sql VOLATILE;
 
+CREATE FUNCTION pgledger_uuidv7() RETURNS UUID
+AS $$
+DECLARE
+    result uuid;
+BEGIN
+    IF pgledger_uuidv7_exists() THEN
+        EXECUTE 'select uuidv7()' INTO result;
+        RETURN result;
+    ELSE
+        RETURN pgledger_uuidv7_microsecond();
+    END IF;
+end
+$$ LANGUAGE plpgsql VOLATILE;
+
 CREATE FUNCTION pgledger_generate_id(prefix TEXT) RETURNS TEXT
 AS $$
-    SELECT prefix || '_' || uuid_to_ulid(uuidv7_microsecond())
+    SELECT prefix || '_' || uuid_to_ulid(pgledger_uuidv7())
 $$ LANGUAGE sql VOLATILE;
 
 CREATE TABLE pgledger_accounts (
