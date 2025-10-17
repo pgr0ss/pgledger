@@ -50,3 +50,10 @@ jobs:
           working-directory: go
           version: latest
           args: --timeout 2m --verbose
+
+  all-tests-passed:
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: All matrix tests passed
+        run: echo "All PostgreSQL versions tested successfully"
