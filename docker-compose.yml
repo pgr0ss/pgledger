@@ -1,7 +1,7 @@
 services:
   postgres:
     container_name: "pgledger_postgres"
-    image: "postgres:${POSTGRES_VERSION:-17.6}"
+    image: "postgres:${POSTGRES_VERSION:-18.0}"
     command: >
       -c max_wal_size=2GB
     ports:
