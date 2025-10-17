@@ -13,6 +13,9 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        postgres_version: ["17.6", "18.0"]
 
     steps:
       - uses: actions/checkout@v5
@@ -33,9 +36,13 @@ jobs:
 
       - name: Start Docker Compose
         run: docker compose up --wait
+        env:
+          POSTGRES_VERSION: ${{ matrix.postgres_version }}
 
       - name: Run tests and linters
         run: just --timestamp check
+        env:
+          POSTGRES_VERSION: ${{ matrix.postgres_version }}
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
