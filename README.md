@@ -181,6 +181,32 @@ Milliseconds/transfer: 2.6
 Bytes/transfer: 743
 ```
 
+## Development
+
+While the implementation of `pgledger` is all SQL, I do use various tools to help with the development:
+- [Go](https://go.dev/) for writing tests
+- [just](https://github.com/casey/just) for running tasks (e.g. `just check` to run the full suite of tests and linters)
+- [uv](https://docs.astral.sh/uv/) for running [sqlfluff](https://github.com/sqlfluff/sqlfluff), the SQL formatter/linter written in Python
+- [Docker Compose](https://docs.docker.com/compose/) for running PostgreSQL
+
+If you're on MacOS, these tools can all be installed via [Homebrew](https://brew.sh/):
+
+```bash
+brew install go just uv docker-desktop
+```
+
+Then you can run PostgreSQL in a docker container:
+
+```bash
+docker compose up
+```
+
+And run the full set of tests and linters with:
+
+```bash
+just check
+```
+
 ## TODO
 
 - Make the transfer view include the currency and account names as well as the ids
