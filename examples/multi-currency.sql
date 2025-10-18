@@ -53,7 +53,7 @@ SELECT * FROM pgledger_create_transfers(
 -- same accounts in reverse order.
 
 -- It is also possible to specify the event_at with `pgledger_create_transfers` using named arguments:
-SELECT * FROM pgledger_create_transfers( -- noqa
+SELECT * FROM pgledger_create_transfers(
     event_at => '2025-07-21T12:45:54.123Z',
     VARIADIC transfer_requests => ARRAY[
         (:'user2_usd_id',:'liquidity_usd_id', '10.00'),
