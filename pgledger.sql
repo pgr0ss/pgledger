@@ -158,7 +158,8 @@ CREATE OR REPLACE FUNCTION pgledger_create_transfer(
     from_account_id TEXT,
     to_account_id TEXT,
     amount NUMERIC,
-    event_at TIMESTAMPTZ DEFAULT NULL
+    event_at TIMESTAMPTZ DEFAULT NULL,
+    metadata JSONB DEFAULT NULL
 )
 RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
 AS $$
@@ -167,6 +168,7 @@ BEGIN
     RETURN QUERY
     SELECT * FROM pgledger_create_transfers(
         event_at,
+        metadata,
         ROW(from_account_id, to_account_id, amount)::transfer_request
     );
 END;
@@ -178,12 +180,26 @@ RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
 AS $$
 BEGIN
     RETURN QUERY
-    SELECT * FROM pgledger_create_transfers(null::TIMESTAMPTZ, VARIADIC transfer_requests);
+    SELECT * FROM pgledger_create_transfers(null::TIMESTAMPTZ, null::JSONb, VARIADIC transfer_requests);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION pgledger_create_transfers(
+    transfer_requests TRANSFER_REQUEST [],
+    event_at TIMESTAMPTZ DEFAULT NULL,
+    metadata JSONB DEFAULT NULL
+)
+RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT * FROM pgledger_create_transfers(event_at, metadata, VARIADIC transfer_requests);
 END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION pgledger_create_transfers(
     event_at TIMESTAMPTZ DEFAULT NULL,
+    metadata JSONB DEFAULT NULL,
     VARIADIC transfer_requests TRANSFER_REQUEST [] DEFAULT '{}'
 )
 RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
