@@ -180,7 +180,7 @@ RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
 AS $$
 BEGIN
     RETURN QUERY
-    SELECT * FROM pgledger_create_transfers(null::TIMESTAMPTZ, null::JSONb, VARIADIC transfer_requests);
+    SELECT * FROM pgledger_create_transfers(null::TIMESTAMPTZ, null::JSONB, VARIADIC transfer_requests);
 END;
 $$ LANGUAGE plpgsql;
 
