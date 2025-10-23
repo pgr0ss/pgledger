@@ -79,3 +79,33 @@ WHERE id =:'user1_receivables_id';
 SELECT * FROM pgledger_entries_view
 WHERE account_id =:'user1_receivables_id'
 ORDER BY account_version;
+
+-- TESTING MULTIPLE TRANSFERS
+SELECT * FROM pgledger_create_transfers(
+    (:'user1_external_id',:'user1_receivables_id', 10.00),
+    (:'user1_receivables_id',:'user1_available_id', 8.00)
+);
+
+SELECT * FROM pgledger_create_transfers(
+    transfer_requests => array[
+    (:'user1_external_id',:'user1_receivables_id', 10.00),
+    (:'user1_receivables_id',:'user1_available_id', 8.00)
+    ]::TRANSFER_REQUEST []
+);
+
+SELECT * FROM pgledger_create_transfers(
+    transfer_requests => array[
+    (:'user1_external_id',:'user1_receivables_id', 10.00),
+    (:'user1_receivables_id',:'user1_available_id', 8.00)
+    ]::TRANSFER_REQUEST [],
+    event_at => '2025-01-01'
+);
+
+SELECT * FROM pgledger_create_transfers(
+    transfer_requests => array[
+    (:'user1_external_id',:'user1_receivables_id', 10.00),
+    (:'user1_receivables_id',:'user1_available_id', 8.00)
+    ]::TRANSFER_REQUEST [],
+    event_at => '2025-01-01',
+    metadata => '{"a": "b"}'
+);
