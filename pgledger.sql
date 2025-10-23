@@ -167,9 +167,9 @@ BEGIN
     -- Simply call pgledger_create_transfers with a single transfer
     RETURN QUERY
     SELECT * FROM pgledger_create_transfers(
-        event_at,
-        metadata,
-        ROW(from_account_id, to_account_id, amount)::transfer_request
+        transfer_requests => array[(from_account_id, to_account_id, amount)::TRANSFER_REQUEST],
+        event_at => event_at,
+        metadata => metadata
     );
 END;
 $$ LANGUAGE plpgsql;
@@ -180,27 +180,14 @@ RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
 AS $$
 BEGIN
     RETURN QUERY
-    SELECT * FROM pgledger_create_transfers(null::TIMESTAMPTZ, null::JSONB, VARIADIC transfer_requests);
+    SELECT * FROM pgledger_create_transfers(transfer_requests);
 END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION pgledger_create_transfers(
-    transfer_requests TRANSFER_REQUEST [],
+    transfer_requests TRANSFER_REQUEST[],
     event_at TIMESTAMPTZ DEFAULT NULL,
     metadata JSONB DEFAULT NULL
-)
-RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
-AS $$
-BEGIN
-    RETURN QUERY
-    SELECT * FROM pgledger_create_transfers(event_at, metadata, VARIADIC transfer_requests);
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE OR REPLACE FUNCTION pgledger_create_transfers(
-    event_at TIMESTAMPTZ DEFAULT NULL,
-    metadata JSONB DEFAULT NULL,
-    VARIADIC transfer_requests TRANSFER_REQUEST [] DEFAULT '{}'
 )
 RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
 AS $$

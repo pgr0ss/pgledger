@@ -23,21 +23,21 @@ SELECT * FROM pgledger_accounts_view
 WHERE id =:'user1_external_id';
                id                |      name      | currency | balance | version | allow_negative_balance | allow_positive_balance |          created_at           |          updated_at           
 ---------------------------------+----------------+----------+---------+---------+------------------------+------------------------+-------------------------------+-------------------------------
- pgla_01K89CXFHGED5R6VMYPJNTWCPR | user1.external | USD      |       0 |       0 | t                      | t                      | 2025-10-23 20:42:10.351058+00 | 2025-10-23 20:42:10.351058+00
+ pgla_01K89DGA1NEZVR0F10MXG3GNZ6 | user1.external | USD      |       0 |       0 | t                      | t                      | 2025-10-23 20:52:27.316273+00 | 2025-10-23 20:52:27.316273+00
 (1 row)
 
 -- The first step in the flow is a $50 payment is created and we are waiting for funds to arrive:
 SELECT * FROM pgledger_create_transfer(:'user1_external_id',:'user1_receivables_id', 50.00);
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------
- pglt_01K89CXFHKERH8EZZ9T4HP1SMW | pgla_01K89CXFHGED5R6VMYPJNTWCPR | pgla_01K89CXFHHEVKSCK7HM4J11PWM |  50.00 | 2025-10-23 20:42:10.354472+00 | 2025-10-23 20:42:10.354472+00
+ pglt_01K89DGA1RFW4ATV8NN8P5G6JZ | pgla_01K89DGA1NEZVR0F10MXG3GNZ6 | pgla_01K89DGA1PFQ29VGZHSJQ985MA |  50.00 | 2025-10-23 20:52:27.319949+00 | 2025-10-23 20:52:27.319949+00
 (1 row)
 
 -- Next, the funds arrive in our account, so we remove them from receivables and make them available:
 SELECT * FROM pgledger_create_transfer(:'user1_receivables_id',:'user1_available_id', 50.00);
-               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            
----------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------
- pglt_01K89CXFHMEQEVYR1FX252Q22H | pgla_01K89CXFHHEVKSCK7HM4J11PWM | pgla_01K89CXFHHFH08JK85NP4ER120 |  50.00 | 2025-10-23 20:42:10.356216+00 | 2025-10-23 20:42:10.356216+00
+               id                |         from_account_id         |          to_account_id          | amount |          created_at          |           event_at           
+---------------------------------+---------------------------------+---------------------------------+--------+------------------------------+------------------------------
+ pglt_01K89DGA1SFWAAA03MNPP5T11R | pgla_01K89DGA1PFQ29VGZHSJQ985MA | pgla_01K89DGA1QEE3R6CX8N6JSM0YT |  50.00 | 2025-10-23 20:52:27.32175+00 | 2025-10-23 20:52:27.32175+00
 (1 row)
 
 -- Now, we can query the accounts and see the balances. We aren't waiting on
@@ -55,17 +55,17 @@ WHERE account_id =:'user1_receivables_id'
 ORDER BY account_version;
                id                |           account_id            |           transfer_id           | amount | account_previous_balance | account_current_balance | account_version |          created_at           |           event_at            
 ---------------------------------+---------------------------------+---------------------------------+--------+--------------------------+-------------------------+-----------------+-------------------------------+-------------------------------
- pgle_01K89CXFHKFTJVV1TCCXCZ3T25 | pgla_01K89CXFHHEVKSCK7HM4J11PWM | pglt_01K89CXFHKERH8EZZ9T4HP1SMW |  50.00 |                     0.00 |                   50.00 |               1 | 2025-10-23 20:42:10.354472+00 | 2025-10-23 20:42:10.354472+00
- pgle_01K89CXFHMEX3AVA53KBC8WRMK | pgla_01K89CXFHHEVKSCK7HM4J11PWM | pglt_01K89CXFHMEQEVYR1FX252Q22H | -50.00 |                    50.00 |                    0.00 |               2 | 2025-10-23 20:42:10.356216+00 | 2025-10-23 20:42:10.356216+00
+ pgle_01K89DGA1SEWT9FZMCQRKF732R | pgla_01K89DGA1PFQ29VGZHSJQ985MA | pglt_01K89DGA1RFW4ATV8NN8P5G6JZ |  50.00 |                     0.00 |                   50.00 |               1 | 2025-10-23 20:52:27.319949+00 | 2025-10-23 20:52:27.319949+00
+ pgle_01K89DGA1TE26AQ0TN2PKDZ4C3 | pgla_01K89DGA1PFQ29VGZHSJQ985MA | pglt_01K89DGA1SFWAAA03MNPP5T11R | -50.00 |                    50.00 |                    0.00 |               2 | 2025-10-23 20:52:27.32175+00  | 2025-10-23 20:52:27.32175+00
 (2 rows)
 
 -- Continuing the example, let's issue a partial refund of the payment. When we
 -- issue the refund, we move the money into the pending_outbound account to
 -- hold it until we get confirmation that it was sent
 SELECT * FROM pgledger_create_transfer(:'user1_available_id',:'user1_pending_outbound_id', 20.00);
-               id                |         from_account_id         |          to_account_id          | amount |          created_at          |           event_at           
----------------------------------+---------------------------------+---------------------------------+--------+------------------------------+------------------------------
- pglt_01K89CXFHNENMVR57ZYWQPRK5A | pgla_01K89CXFHHFH08JK85NP4ER120 | pgla_01K89CXFHJE50SZ48R1FX1HZZQ |  20.00 | 2025-10-23 20:42:10.35716+00 | 2025-10-23 20:42:10.35716+00
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            
+---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------
+ pglt_01K89DGA1TFVKAPASEBCRD00RZ | pgla_01K89DGA1QEE3R6CX8N6JSM0YT | pgla_01K89DGA1QEZETRQQ2M54ZVA07 |  20.00 | 2025-10-23 20:52:27.322742+00 | 2025-10-23 20:52:27.322742+00
 (1 row)
 
 -- Once we get confirmation that that refund was sent, We can move the money
@@ -83,7 +83,7 @@ FROM
     );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |          event_at          
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+----------------------------
- pglt_01K89CXFHNFNK849J5YMFRHD37 | pgla_01K89CXFHJE50SZ48R1FX1HZZQ | pgla_01K89CXFHGED5R6VMYPJNTWCPR |  20.00 | 2025-10-23 20:42:10.357712+00 | 2025-07-21 12:45:54.123+00
+ pglt_01K89DGA1VEXJ85R5FC283TH86 | pgla_01K89DGA1QEZETRQQ2M54ZVA07 | pgla_01K89DGA1NEZVR0F10MXG3GNZ6 |  20.00 | 2025-10-23 20:52:27.323315+00 | 2025-07-21 12:45:54.123+00
 (1 row)
 
 -- Now, we can query the current state. The external account has -$30 ($50
@@ -107,13 +107,13 @@ WHERE id IN (:'user1_external_id',:'user1_receivables_id',:'user1_available_id',
 SELECT * FROM pgledger_create_transfer(:'user1_external_id',:'user1_receivables_id', 10.00);
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------
- pglt_01K89CXFHPETEBVTPFNV7763W7 | pgla_01K89CXFHGED5R6VMYPJNTWCPR | pgla_01K89CXFHHEVKSCK7HM4J11PWM |  10.00 | 2025-10-23 20:42:10.358204+00 | 2025-10-23 20:42:10.358204+00
+ pglt_01K89DGA1WE21TC9ARVMSHT34X | pgla_01K89DGA1NEZVR0F10MXG3GNZ6 | pgla_01K89DGA1PFQ29VGZHSJQ985MA |  10.00 | 2025-10-23 20:52:27.323901+00 | 2025-10-23 20:52:27.323901+00
 (1 row)
 
 SELECT * FROM pgledger_create_transfer(:'user1_receivables_id',:'user1_available_id', 8.00);
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------
- pglt_01K89CXFHQE49813WGEXNEJBZB | pgla_01K89CXFHHEVKSCK7HM4J11PWM | pgla_01K89CXFHHFH08JK85NP4ER120 |   8.00 | 2025-10-23 20:42:10.358941+00 | 2025-10-23 20:42:10.358941+00
+ pglt_01K89DGA1WF2QSYJZYSFH2SG3Z | pgla_01K89DGA1PFQ29VGZHSJQ985MA | pgla_01K89DGA1QEE3R6CX8N6JSM0YT |   8.00 | 2025-10-23 20:52:27.324336+00 | 2025-10-23 20:52:27.324336+00
 (1 row)
 
 -- Now, we can see that our receivables balance is not $0 like we expect:
@@ -130,10 +130,10 @@ WHERE account_id =:'user1_receivables_id'
 ORDER BY account_version;
                id                |           account_id            |           transfer_id           | amount | account_previous_balance | account_current_balance | account_version |          created_at           |           event_at            
 ---------------------------------+---------------------------------+---------------------------------+--------+--------------------------+-------------------------+-----------------+-------------------------------+-------------------------------
- pgle_01K89CXFHKFTJVV1TCCXCZ3T25 | pgla_01K89CXFHHEVKSCK7HM4J11PWM | pglt_01K89CXFHKERH8EZZ9T4HP1SMW |  50.00 |                     0.00 |                   50.00 |               1 | 2025-10-23 20:42:10.354472+00 | 2025-10-23 20:42:10.354472+00
- pgle_01K89CXFHMEX3AVA53KBC8WRMK | pgla_01K89CXFHHEVKSCK7HM4J11PWM | pglt_01K89CXFHMEQEVYR1FX252Q22H | -50.00 |                    50.00 |                    0.00 |               2 | 2025-10-23 20:42:10.356216+00 | 2025-10-23 20:42:10.356216+00
- pgle_01K89CXFHPF36TGVY3CFES470K | pgla_01K89CXFHHEVKSCK7HM4J11PWM | pglt_01K89CXFHPETEBVTPFNV7763W7 |  10.00 |                     0.00 |                   10.00 |               3 | 2025-10-23 20:42:10.358204+00 | 2025-10-23 20:42:10.358204+00
- pgle_01K89CXFHQE9N8H0SGNNJTNWG5 | pgla_01K89CXFHHEVKSCK7HM4J11PWM | pglt_01K89CXFHQE49813WGEXNEJBZB |  -8.00 |                    10.00 |                    2.00 |               4 | 2025-10-23 20:42:10.358941+00 | 2025-10-23 20:42:10.358941+00
+ pgle_01K89DGA1SEWT9FZMCQRKF732R | pgla_01K89DGA1PFQ29VGZHSJQ985MA | pglt_01K89DGA1RFW4ATV8NN8P5G6JZ |  50.00 |                     0.00 |                   50.00 |               1 | 2025-10-23 20:52:27.319949+00 | 2025-10-23 20:52:27.319949+00
+ pgle_01K89DGA1TE26AQ0TN2PKDZ4C3 | pgla_01K89DGA1PFQ29VGZHSJQ985MA | pglt_01K89DGA1SFWAAA03MNPP5T11R | -50.00 |                    50.00 |                    0.00 |               2 | 2025-10-23 20:52:27.32175+00  | 2025-10-23 20:52:27.32175+00
+ pgle_01K89DGA1WE91T0M9MH0WBX12C | pgla_01K89DGA1PFQ29VGZHSJQ985MA | pglt_01K89DGA1WE21TC9ARVMSHT34X |  10.00 |                     0.00 |                   10.00 |               3 | 2025-10-23 20:52:27.323901+00 | 2025-10-23 20:52:27.323901+00
+ pgle_01K89DGA1WF9WAFEZJKF1BTMPW | pgla_01K89DGA1PFQ29VGZHSJQ985MA | pglt_01K89DGA1WF2QSYJZYSFH2SG3Z |  -8.00 |                    10.00 |                    2.00 |               4 | 2025-10-23 20:52:27.324336+00 | 2025-10-23 20:52:27.324336+00
 (4 rows)
 
 -- TESTING MULTIPLE TRANSFERS
@@ -143,8 +143,8 @@ SELECT * FROM pgledger_create_transfers(
 );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------
- pglt_01K89CXFHQFN09X07Z6YXC6X09 | pgla_01K89CXFHGED5R6VMYPJNTWCPR | pgla_01K89CXFHHEVKSCK7HM4J11PWM |  10.00 | 2025-10-23 20:42:10.359681+00 | 2025-10-23 20:42:10.359681+00
- pglt_01K89CXFHQFXYTTNCWD4WWWMH0 | pgla_01K89CXFHHEVKSCK7HM4J11PWM | pgla_01K89CXFHHFH08JK85NP4ER120 |   8.00 | 2025-10-23 20:42:10.359681+00 | 2025-10-23 20:42:10.359681+00
+ pglt_01K89DGA1XEJRAV10NR02NQY8T | pgla_01K89DGA1NEZVR0F10MXG3GNZ6 | pgla_01K89DGA1PFQ29VGZHSJQ985MA |  10.00 | 2025-10-23 20:52:27.325176+00 | 2025-10-23 20:52:27.325176+00
+ pglt_01K89DGA1XETSR9SCK7GC4SBNM | pgla_01K89DGA1PFQ29VGZHSJQ985MA | pgla_01K89DGA1QEE3R6CX8N6JSM0YT |   8.00 | 2025-10-23 20:52:27.325176+00 | 2025-10-23 20:52:27.325176+00
 (2 rows)
 
 SELECT * FROM pgledger_create_transfers(
@@ -155,8 +155,8 @@ SELECT * FROM pgledger_create_transfers(
 );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------
- pglt_01K89CXFHREMQSYBYYWF72YS6S | pgla_01K89CXFHGED5R6VMYPJNTWCPR | pgla_01K89CXFHHEVKSCK7HM4J11PWM |  10.00 | 2025-10-23 20:42:10.360219+00 | 2025-10-23 20:42:10.360219+00
- pglt_01K89CXFHREWKTKG5QRKFMRGC5 | pgla_01K89CXFHHEVKSCK7HM4J11PWM | pgla_01K89CXFHHFH08JK85NP4ER120 |   8.00 | 2025-10-23 20:42:10.360219+00 | 2025-10-23 20:42:10.360219+00
+ pglt_01K89DGA1XFY29BNAHK3P1GZ0E | pgla_01K89DGA1NEZVR0F10MXG3GNZ6 | pgla_01K89DGA1PFQ29VGZHSJQ985MA |  10.00 | 2025-10-23 20:52:27.325895+00 | 2025-10-23 20:52:27.325895+00
+ pglt_01K89DGA1YE4YB2R471PJS1C6V | pgla_01K89DGA1PFQ29VGZHSJQ985MA | pgla_01K89DGA1QEE3R6CX8N6JSM0YT |   8.00 | 2025-10-23 20:52:27.325895+00 | 2025-10-23 20:52:27.325895+00
 (2 rows)
 
 SELECT * FROM pgledger_create_transfers(
@@ -166,10 +166,10 @@ SELECT * FROM pgledger_create_transfers(
     ]::TRANSFER_REQUEST [],
     event_at => '2025-01-01'
 );
-               id                |         from_account_id         |          to_account_id          | amount |         created_at          |        event_at        
----------------------------------+---------------------------------+---------------------------------+--------+-----------------------------+------------------------
- pglt_01K89CXFHRFK19ZFEQ2ASNPAKX | pgla_01K89CXFHGED5R6VMYPJNTWCPR | pgla_01K89CXFHHEVKSCK7HM4J11PWM |  10.00 | 2025-10-23 20:42:10.3607+00 | 2025-01-01 00:00:00+00
- pglt_01K89CXFHRFTDS0G5HA7EQ9ZQE | pgla_01K89CXFHHEVKSCK7HM4J11PWM | pgla_01K89CXFHHFH08JK85NP4ER120 |   8.00 | 2025-10-23 20:42:10.3607+00 | 2025-01-01 00:00:00+00
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |        event_at        
+---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+------------------------
+ pglt_01K89DGA1YEQKRB082Q72BTJBT | pgla_01K89DGA1NEZVR0F10MXG3GNZ6 | pgla_01K89DGA1PFQ29VGZHSJQ985MA |  10.00 | 2025-10-23 20:52:27.326302+00 | 2025-01-01 00:00:00+00
+ pglt_01K89DGA1YEYF9G7KMH0HBSE36 | pgla_01K89DGA1PFQ29VGZHSJQ985MA | pgla_01K89DGA1QEE3R6CX8N6JSM0YT |   8.00 | 2025-10-23 20:52:27.326302+00 | 2025-01-01 00:00:00+00
 (2 rows)
 
 SELECT * FROM pgledger_create_transfers(
@@ -182,7 +182,7 @@ SELECT * FROM pgledger_create_transfers(
 );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |        event_at        
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+------------------------
- pglt_01K89CXFHSEFAVVKB4038J751K | pgla_01K89CXFHGED5R6VMYPJNTWCPR | pgla_01K89CXFHHEVKSCK7HM4J11PWM |  10.00 | 2025-10-23 20:42:10.361139+00 | 2025-01-01 00:00:00+00
- pglt_01K89CXFHSEPSV9KQCJPQWKJKM | pgla_01K89CXFHHEVKSCK7HM4J11PWM | pgla_01K89CXFHHFH08JK85NP4ER120 |   8.00 | 2025-10-23 20:42:10.361139+00 | 2025-01-01 00:00:00+00
+ pglt_01K89DGA1YFHFBSNE4WTPKNK1D | pgla_01K89DGA1NEZVR0F10MXG3GNZ6 | pgla_01K89DGA1PFQ29VGZHSJQ985MA |  10.00 | 2025-10-23 20:52:27.326698+00 | 2025-01-01 00:00:00+00
+ pglt_01K89DGA1YFR195GCF0DT9CFBT | pgla_01K89DGA1PFQ29VGZHSJQ985MA | pgla_01K89DGA1QEE3R6CX8N6JSM0YT |   8.00 | 2025-10-23 20:52:27.326698+00 | 2025-01-01 00:00:00+00
 (2 rows)
 
