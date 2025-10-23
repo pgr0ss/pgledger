@@ -159,10 +159,10 @@ func TestCreateTransfersWithAndWithoutEventAt(t *testing.T) {
 	_, err = conn.Exec(ctx, "select pgledger_create_transfers(($1, $2, 10))", account1.ID, account2.ID)
 	assert.NoError(t, err)
 
-	_, err = conn.Exec(ctx, "select pgledger_create_transfers(event_at => $3::timestamptz, transfer_requests => array[($1, $2, 10)::transfer_request])", account1.ID, account2.ID, eventAt)
+	_, err = conn.Exec(ctx, "select pgledger_create_transfers(array[($1, $2, 10)::transfer_request], $3)", account1.ID, account2.ID, eventAt)
 	assert.NoError(t, err)
 
-	_, err = conn.Exec(ctx, "select pgledger_create_transfers(event_at => $3::timestamptz, transfer_requests => array[($1, $2, 10), ($1, $2, 10)]::transfer_request[])", account1.ID, account2.ID, eventAt)
+	_, err = conn.Exec(ctx, "select pgledger_create_transfers(array[($1, $2, 10), ($1, $2, 10)]::transfer_request[], $3)", account1.ID, account2.ID, eventAt)
 	assert.NoError(t, err)
 
 	// With named parameters
