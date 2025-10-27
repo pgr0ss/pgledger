@@ -47,14 +47,16 @@ SELECT * FROM pgledger_create_transfer(:'user1_available_id',:'user1_pending_out
 -- back to the user's external account (e.g. their credit/debit card). Often,
 -- this confirmation will come as a webhook or bank file or similar, so we can
 -- record the event time in the confirmation separately from the time we record
--- the ledger transfer (event_at vs created_at):
+-- the ledger transfer (event_at vs created_at). We can also record extra metadata
+-- as JSON that helps us tie it all together:
 SELECT *
 FROM
     pgledger_create_transfer(
         :'user1_pending_outbound_id',
         :'user1_external_id',
         20.00,
-        event_at => '2025-07-21T12:45:54.123Z'
+        event_at => '2025-07-21T12:45:54.123Z',
+        metadata => '{"webhook_id": "webhook_123"}'
     );
 
 -- Now, we can query the current state. The external account has -$30 ($50

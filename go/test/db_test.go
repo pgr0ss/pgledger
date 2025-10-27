@@ -159,16 +159,16 @@ func TestCreateTransfersWithAndWithoutEventAt(t *testing.T) {
 	_, err = conn.Exec(ctx, "select pgledger_create_transfers(($1, $2, 10))", account1.ID, account2.ID)
 	assert.NoError(t, err)
 
-	_, err = conn.Exec(ctx, "select pgledger_create_transfers($3::timestamptz, ($1, $2, 10))", account1.ID, account2.ID, eventAt)
+	_, err = conn.Exec(ctx, "select pgledger_create_transfers(array[($1, $2, 10)::transfer_request], $3)", account1.ID, account2.ID, eventAt)
 	assert.NoError(t, err)
 
-	_, err = conn.Exec(ctx, "select pgledger_create_transfers($3::timestamptz, ($1, $2, 10), ($1, $2, 10))", account1.ID, account2.ID, eventAt)
+	_, err = conn.Exec(ctx, "select pgledger_create_transfers(array[($1, $2, 10), ($1, $2, 10)]::transfer_request[], $3)", account1.ID, account2.ID, eventAt)
 	assert.NoError(t, err)
 
 	// With named parameters
 	_, err = conn.Exec(ctx, `select pgledger_create_transfers(
 			event_at => $3,
- 			variadic transfer_requests => array[
+ 			transfer_requests => array[
 				($1, $2, '30'),
 				($1, $2, '40')
 			]::transfer_request[])`,
@@ -196,6 +196,86 @@ func TestCreateTransfersWithAndWithoutEventAt(t *testing.T) {
 	assert.Equal(t, eventAt, transfers[3].EventAt.UTC())
 	assert.Equal(t, eventAt, transfers[4].EventAt.UTC())
 	assert.Equal(t, eventAt, transfers[5].EventAt.UTC())
+}
+
+func TestCreateTransferWithAndWithoutMetadata(t *testing.T) {
+	conn := dbconn(t)
+	ctx := t.Context()
+
+	account1 := createAccount(t, conn, "account 1", "USD")
+	account2 := createAccount(t, conn, "account 2", "USD")
+
+	_, err := conn.Exec(ctx, "select pgledger_create_transfer($1, $2, 10)", account1.ID, account2.ID)
+	assert.NoError(t, err)
+
+	_, err = conn.Exec(ctx, "select pgledger_create_transfer($1, $2, 10, null, $3)", account1.ID, account2.ID, `{"a": "b"}`)
+	assert.NoError(t, err)
+
+	_, err = conn.Exec(ctx, "select pgledger_create_transfer($1, $2, 10, metadata => $3)", account1.ID, account2.ID, `{"c": "d"}`)
+	assert.NoError(t, err)
+
+	rows, err := conn.Query(ctx, "select * from pgledger_transfers where from_account_id = $1", account1.ID)
+	assert.NoError(t, err)
+
+	transfers, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[Transfer])
+	assert.NoError(t, err)
+
+	assert.Len(t, transfers, 3)
+
+	assert.Nil(t, transfers[0].Metadata)
+	assert.Equal(t, `{"a": "b"}`, *transfers[1].Metadata)
+	assert.Equal(t, `{"c": "d"}`, *transfers[2].Metadata)
+
+	// Entries view also has Metadata field
+	entries := getEntries(t, conn, account1.ID)
+	assert.NoError(t, err)
+	assert.Len(t, entries, 3)
+
+	assert.Nil(t, entries[0].Metadata)
+	assert.Equal(t, `{"a": "b"}`, *entries[1].Metadata)
+	assert.Equal(t, `{"c": "d"}`, *entries[2].Metadata)
+}
+
+func TestCreateTransfersWithAndWithoutMetadata(t *testing.T) {
+	conn := dbconn(t)
+	ctx := t.Context()
+
+	account1 := createAccount(t, conn, "account 1", "USD")
+	account2 := createAccount(t, conn, "account 2", "USD")
+
+	_, err := conn.Exec(ctx, "select pgledger_create_transfers(($1, $2, 10))", account1.ID, account2.ID)
+	assert.NoError(t, err)
+
+	_, err = conn.Exec(ctx, "select pgledger_create_transfers(array[($1, $2, 10)::transfer_request], null, $3)", account1.ID, account2.ID, `{"a": "b"}`)
+	assert.NoError(t, err)
+
+	_, err = conn.Exec(ctx, "select pgledger_create_transfers(array[($1, $2, 10), ($1, $2, 10)]::transfer_request[], null, $3)", account1.ID, account2.ID, `{"c": "d"}`)
+	assert.NoError(t, err)
+
+	// With named parameters
+	_, err = conn.Exec(ctx, `select pgledger_create_transfers(
+			metadata => $3,
+ 			transfer_requests => array[
+				($1, $2, '30'),
+				($1, $2, '40')
+			]::transfer_request[])`,
+		account1.ID, account2.ID, `{"e": "f"}`)
+	assert.NoError(t, err)
+
+	rows, err := conn.Query(ctx, "select * from pgledger_transfers where from_account_id = $1", account1.ID)
+	assert.NoError(t, err)
+
+	transfers, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[Transfer])
+	assert.NoError(t, err)
+
+	assert.Len(t, transfers, 6)
+
+	assert.Nil(t, transfers[0].Metadata)
+	assert.Equal(t, `{"a": "b"}`, *transfers[1].Metadata)
+	assert.Equal(t, `{"c": "d"}`, *transfers[2].Metadata)
+	assert.Equal(t, `{"c": "d"}`, *transfers[3].Metadata)
+	assert.Equal(t, `{"e": "f"}`, *transfers[4].Metadata)
+	assert.Equal(t, `{"e": "f"}`, *transfers[5].Metadata)
 }
 
 func TestCreateMultipleTransfers(t *testing.T) {

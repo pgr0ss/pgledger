@@ -58,6 +58,7 @@ CREATE TABLE pgledger_transfers (
     amount NUMERIC NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     event_at TIMESTAMPTZ NOT NULL,
+    metadata JSONB,
     CHECK (amount > 0 AND from_account_id != to_account_id)
 );
 
@@ -99,7 +100,8 @@ SELECT
     to_account_id,
     amount,
     created_at,
-    event_at
+    event_at,
+    metadata
 FROM pgledger_transfers;
 
 CREATE VIEW pgledger_entries_view AS
@@ -112,7 +114,8 @@ SELECT
     e.account_current_balance,
     e.account_version,
     e.created_at,
-    t.event_at
+    t.event_at,
+    t.metadata
 FROM pgledger_entries e
 INNER JOIN pgledger_transfers t ON e.transfer_id = t.id;
 
@@ -158,7 +161,8 @@ CREATE OR REPLACE FUNCTION pgledger_create_transfer(
     from_account_id TEXT,
     to_account_id TEXT,
     amount NUMERIC,
-    event_at TIMESTAMPTZ DEFAULT NULL
+    event_at TIMESTAMPTZ DEFAULT NULL,
+    metadata JSONB DEFAULT NULL
 )
 RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
 AS $$
@@ -166,8 +170,9 @@ BEGIN
     -- Simply call pgledger_create_transfers with a single transfer
     RETURN QUERY
     SELECT * FROM pgledger_create_transfers(
-        event_at,
-        ROW(from_account_id, to_account_id, amount)::transfer_request
+        transfer_requests => array[(from_account_id, to_account_id, amount)::TRANSFER_REQUEST],
+        event_at => event_at,
+        metadata => metadata
     );
 END;
 $$ LANGUAGE plpgsql;
@@ -178,13 +183,14 @@ RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
 AS $$
 BEGIN
     RETURN QUERY
-    SELECT * FROM pgledger_create_transfers(null::TIMESTAMPTZ, VARIADIC transfer_requests);
+    SELECT * FROM pgledger_create_transfers(transfer_requests);
 END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION pgledger_create_transfers(
+    transfer_requests TRANSFER_REQUEST [],
     event_at TIMESTAMPTZ DEFAULT NULL,
-    VARIADIC transfer_requests TRANSFER_REQUEST [] DEFAULT '{}'
+    metadata JSONB DEFAULT NULL
 )
 RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
 AS $$
@@ -254,8 +260,8 @@ BEGIN
         END IF;
 
         -- Create transfer record
-        INSERT INTO pgledger_transfers (from_account_id, to_account_id, amount, created_at, event_at)
-        VALUES (transfer_request.from_account_id, transfer_request.to_account_id, transfer_request.amount, now(), coalesce(event_at, now()))
+        INSERT INTO pgledger_transfers (from_account_id, to_account_id, amount, created_at, event_at, metadata)
+        VALUES (transfer_request.from_account_id, transfer_request.to_account_id, transfer_request.amount, now(), coalesce(event_at, now()), metadata)
         RETURNING pgledger_transfers.id INTO transfer_id;
 
         transfer_ids := array_append(transfer_ids, transfer_id);
