@@ -2,6 +2,7 @@ package test
 
 import (
 	"context"
+	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -48,6 +49,11 @@ type Entry struct {
 	AccountVersion         int
 	CreatedAt              time.Time
 	EventAt                time.Time
+}
+
+func setupTest(t *testing.T) *pgxpool.Pool {
+	t.Parallel()
+	return dbconn(t)
 }
 
 func dbconn(t TestingT) *pgxpool.Pool {
