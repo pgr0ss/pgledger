@@ -37,6 +37,7 @@ type Transfer struct {
 	Amount        string
 	CreatedAt     time.Time
 	EventAt       time.Time
+	Metadata      *string
 }
 
 type Entry struct {
@@ -49,6 +50,7 @@ type Entry struct {
 	AccountVersion         int
 	CreatedAt              time.Time
 	EventAt                time.Time
+	Metadata               *string
 }
 
 func setupTest(t *testing.T) *pgxpool.Pool {

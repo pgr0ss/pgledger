@@ -52,10 +52,12 @@ SELECT * FROM pgledger_create_transfers(
 -- likely to result in deadlocks since bidrectional transfers will lock the
 -- same accounts in reverse order.
 
--- It is also possible to specify the event_at with `pgledger_create_transfers` using named arguments:
+-- It is also possible to specify the event_at and metadata with
+-- `pgledger_create_transfers` using named arguments:
 SELECT * FROM pgledger_create_transfers(
     event_at => '2025-07-21T12:45:54.123Z',
-    VARIADIC transfer_requests => ARRAY[
+    metadata => '{"external_id": "ext_123"}',
+    transfer_requests => ARRAY[
         (:'user2_usd_id',:'liquidity_usd_id', '10.00'),
         (:'liquidity_eur_id',:'user2_eur_id', '9.26')
     ]::TRANSFER_REQUEST []
