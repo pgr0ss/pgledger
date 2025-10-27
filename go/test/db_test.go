@@ -12,7 +12,7 @@ import (
 )
 
 func TestAddAccount(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 
 	account := createAccount(t, conn, "account 1", "USD")
 
@@ -26,7 +26,7 @@ func TestAddAccount(t *testing.T) {
 }
 
 func TestAccountsThatCannotBeNegative(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 	ctx := t.Context()
 
 	rows, err := conn.Query(ctx, "select id from pgledger_create_account('positive-only', 'USD', allow_negative_balance => false)")
@@ -48,7 +48,7 @@ func TestAccountsThatCannotBeNegative(t *testing.T) {
 }
 
 func TestAccountsThatCannotBePositive(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 	ctx := t.Context()
 
 	rows, err := conn.Query(ctx, `SELECT id FROM pgledger_create_account('negative-only', 'USD', allow_positive_balance => false)`)
@@ -70,7 +70,7 @@ func TestAccountsThatCannotBePositive(t *testing.T) {
 }
 
 func TestCreateTransfer(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 
 	account1 := createAccount(t, conn, "account 1", "USD")
 	account2 := createAccount(t, conn, "account 2", "USD")
@@ -102,7 +102,7 @@ func TestCreateTransfer(t *testing.T) {
 }
 
 func TestCreateTransferWithAndWithoutEventAt(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 	ctx := t.Context()
 
 	account1 := createAccount(t, conn, "account 1", "USD")
@@ -147,7 +147,7 @@ func TestCreateTransferWithAndWithoutEventAt(t *testing.T) {
 }
 
 func TestCreateTransfersWithAndWithoutEventAt(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 	ctx := t.Context()
 
 	account1 := createAccount(t, conn, "account 1", "USD")
@@ -199,7 +199,7 @@ func TestCreateTransfersWithAndWithoutEventAt(t *testing.T) {
 }
 
 func TestCreateMultipleTransfers(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 	ctx := t.Context()
 
 	account1 := createAccount(t, conn, "account 1", "USD")
@@ -228,7 +228,7 @@ func TestCreateMultipleTransfers(t *testing.T) {
 }
 
 func TestMultipleTransfersRollsBackIfOneIsBad(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 	ctx := t.Context()
 
 	account1 := createAccount(t, conn, "account 1", "USD")
@@ -262,7 +262,7 @@ func TestMultipleTransfersRollsBackIfOneIsBad(t *testing.T) {
 }
 
 func TestTransfersRollbackIfTransctionRollback(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 	ctx := t.Context()
 
 	account1 := createAccount(t, conn, "account 1", "USD")
@@ -285,7 +285,7 @@ func TestTransfersRollbackIfTransctionRollback(t *testing.T) {
 }
 
 func TestCreateMultipleTransfersRollbackOnFailure(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 	ctx := t.Context()
 
 	account1 := createAccount(t, conn, "account 1", "USD")
@@ -316,7 +316,7 @@ func TestCreateMultipleTransfersRollbackOnFailure(t *testing.T) {
 }
 
 func TestTransferWithInvalidAccountID(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 	ctx := t.Context()
 
 	account1 := createAccount(t, conn, "account 1", "USD")
@@ -329,7 +329,7 @@ func TestTransferWithInvalidAccountID(t *testing.T) {
 }
 
 func TestEntries(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 
 	account1 := createAccount(t, conn, "account 1", "USD")
 	account2 := createAccount(t, conn, "account 2", "USD")
@@ -402,7 +402,7 @@ func TestEntries(t *testing.T) {
 }
 
 func TestTransferAmountsArePositive(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 	ctx := t.Context()
 
 	account1 := createAccount(t, conn, "account 1", "USD")
@@ -416,7 +416,7 @@ func TestTransferAmountsArePositive(t *testing.T) {
 }
 
 func TestCannotTransferBetweenDifferentCurrencies(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 	ctx := t.Context()
 
 	// Create two accounts with different currencies
@@ -435,7 +435,7 @@ func TestCannotTransferBetweenDifferentCurrencies(t *testing.T) {
 }
 
 func TestTransferBetweenCurrenciesWithExtraAccounts(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 	ctx := t.Context()
 
 	// Create two accounts with different currencies
@@ -461,7 +461,7 @@ func TestTransferBetweenCurrenciesWithExtraAccounts(t *testing.T) {
 }
 
 func TestTransfersUseDifferentAccounts(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 	ctx := t.Context()
 
 	account1 := createAccount(t, conn, "account 1", "USD")
@@ -471,7 +471,7 @@ func TestTransfersUseDifferentAccounts(t *testing.T) {
 }
 
 func TestConcurrency(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 
 	account1 := createAccount(t, conn, "account 1", "USD")
 	account2 := createAccount(t, conn, "account 2", "USD")
@@ -501,7 +501,7 @@ func TestConcurrency(t *testing.T) {
 }
 
 func TestConcurrencyWithCurrencyExchange(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 	ctx := t.Context()
 
 	// Create two accounts with different currencies
@@ -542,7 +542,7 @@ func TestConcurrencyWithCurrencyExchange(t *testing.T) {
 }
 
 func TestIdsAreMonotonic(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 	ctx := t.Context()
 
 	// This query generates a series of ids, and then checks their sort order
@@ -570,7 +570,7 @@ func TestIdsAreMonotonic(t *testing.T) {
 }
 
 func TestFindHistoricalBalanceAtGivenTime(t *testing.T) {
-	conn := dbconn(t)
+	conn := setupTest(t)
 	ctx := t.Context()
 
 	account1 := createAccount(t, conn, "account 1", "USD")
