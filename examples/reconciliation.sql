@@ -130,3 +130,28 @@ INNER JOIN pgledger_accounts_view a ON e.account_id = a.id
 WHERE e.metadata ->> 'payment_id' = 'p_123'
 ORDER BY 1
 \crosstabview transfer_id name amount
+
+
+-- We can even get fancier and sum the entries for each account in the table:
+WITH entries AS (
+    SELECT
+        e.transfer_id,
+        a.name,
+        e.amount
+    FROM pgledger_entries_view e
+    INNER JOIN pgledger_accounts_view a ON e.account_id = a.id
+    WHERE e.metadata ->> 'payment_id' = 'p_123'
+)
+
+SELECT * FROM (
+    SELECT * FROM entries
+    UNION
+    SELECT
+        '--- SUMS ---' AS transfer_id,
+        name,
+        sum(amount)
+    FROM entries
+    GROUP BY 1, 2
+)
+ORDER BY transfer_id
+\crosstabview transfer_id name amount

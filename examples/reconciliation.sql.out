@@ -31,7 +31,7 @@ SELECT * FROM pgledger_create_transfer(
 );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            |        metadata         
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+-------------------------
- pglt_01K8KZNDE3F6VTM7QC0GMV44X8 | pgla_01K8KZNDE0FTGVETJKZAHX5T9G | pgla_01K8KZNDE1FFP87KA289FXRSEN |  50.00 | 2025-10-27 23:22:13.314654+00 | 2025-10-27 23:22:13.314654+00 | {"payment_id": "p_123"}
+ pglt_01K8M3Y0B1ENRV6VNFR6JMAXQD | pgla_01K8M3Y0AYFZ1BZN63V0H8EENB | pgla_01K8M3Y0AZFG2SMJFVC09BK2NH |  50.00 | 2025-10-28 00:36:49.120496+00 | 2025-10-28 00:36:49.120496+00 | {"payment_id": "p_123"}
 (1 row)
 
 -- The user also creates another $50 payment:
@@ -43,7 +43,7 @@ SELECT * FROM pgledger_create_transfer(
 );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            |        metadata         
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+-------------------------
- pglt_01K8KZNDE4FBMT625FF7P4AFWD | pgla_01K8KZNDE0FTGVETJKZAHX5T9G | pgla_01K8KZNDE1FFP87KA289FXRSEN |  50.00 | 2025-10-27 23:22:13.316456+00 | 2025-10-27 23:22:13.316456+00 | {"payment_id": "p_456"}
+ pglt_01K8M3Y0B2E8KTNAJA0ZHDM8Y7 | pgla_01K8M3Y0AYFZ1BZN63V0H8EENB | pgla_01K8M3Y0AZFG2SMJFVC09BK2NH |  50.00 | 2025-10-28 00:36:49.121945+00 | 2025-10-28 00:36:49.121945+00 | {"payment_id": "p_456"}
 (1 row)
 
 -- Next, the funds arrive in our account for one of the payments, so we remove
@@ -56,7 +56,7 @@ SELECT * FROM pgledger_create_transfer(
 );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            |        metadata         
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+-------------------------
- pglt_01K8KZNDE5EP88JXDPV1TVX34T | pgla_01K8KZNDE1FFP87KA289FXRSEN | pgla_01K8KZNDE2E3WREDDG5HMKDFT3 |  50.00 | 2025-10-27 23:22:13.317159+00 | 2025-10-27 23:22:13.317159+00 | {"payment_id": "p_456"}
+ pglt_01K8M3Y0B2F7ZBDYE71P95VRHQ | pgla_01K8M3Y0AZFG2SMJFVC09BK2NH | pgla_01K8M3Y0B0E2E8G38C8N1CBKXK |  50.00 | 2025-10-28 00:36:49.122481+00 | 2025-10-28 00:36:49.122481+00 | {"payment_id": "p_456"}
 (1 row)
 
 -- Now, we can query the receivables account and see that the balance is still
@@ -95,7 +95,7 @@ SELECT * FROM pgledger_create_transfer(
 );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            |        metadata         
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+-------------------------
- pglt_01K8KZNDE6FBPRGK0EEE8ZG78X | pgla_01K8KZNDE1FFP87KA289FXRSEN | pgla_01K8KZNDE2E3WREDDG5HMKDFT3 |  49.50 | 2025-10-27 23:22:13.318509+00 | 2025-10-27 23:22:13.318509+00 | {"payment_id": "p_123"}
+ pglt_01K8M3Y0B3EZ89BYV9W8K4FS4H | pgla_01K8M3Y0AZFG2SMJFVC09BK2NH | pgla_01K8M3Y0B0E2E8G38C8N1CBKXK |  49.50 | 2025-10-28 00:36:49.123313+00 | 2025-10-28 00:36:49.123313+00 | {"payment_id": "p_123"}
 (1 row)
 
 -- Now, this discrepency will show up in the rollup, and it will tell us how much it's off by:
@@ -122,7 +122,7 @@ SELECT * FROM pgledger_create_transfer(
 );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            |        metadata         
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+-------------------------
- pglt_01K8KZNDE7FEY9SV4KSZZ14TFJ | pgla_01K8KZNDE2E3WREDDG5HMKDFT3 | pgla_01K8KZNDE2EPJS13EK23NY30NB |  20.00 | 2025-10-27 23:22:13.319583+00 | 2025-10-27 23:22:13.319583+00 | {"payment_id": "p_123"}
+ pglt_01K8M3Y0B4E5TA0E2MDZ7YZ35Q | pgla_01K8M3Y0B0E2E8G38C8N1CBKXK | pgla_01K8M3Y0B0EJB8N305PZ3JW4W5 |  20.00 | 2025-10-28 00:36:49.123976+00 | 2025-10-28 00:36:49.123976+00 | {"payment_id": "p_123"}
 (1 row)
 
 -- Once we get confirmation that that refund was sent, We can move the money
@@ -139,7 +139,7 @@ SELECT * FROM pgledger_create_transfer(
 );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |          event_at          |                       metadata                       
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+----------------------------+------------------------------------------------------
- pglt_01K8KZNDE8EWCBEZZW8SS6NM1D | pgla_01K8KZNDE2EPJS13EK23NY30NB | pgla_01K8KZNDE0FTGVETJKZAHX5T9G |  20.00 | 2025-10-27 23:22:13.320311+00 | 2025-07-21 12:45:54.123+00 | {"payment_id": "p_123", "webhook_id": "webhook_123"}
+ pglt_01K8M3Y0B4EWZTG4ZR2VEJ2KYS | pgla_01K8M3Y0B0EJB8N305PZ3JW4W5 | pgla_01K8M3Y0AYFZ1BZN63V0H8EENB |  20.00 | 2025-10-28 00:36:49.124347+00 | 2025-07-21 12:45:54.123+00 | {"payment_id": "p_123", "webhook_id": "webhook_123"}
 (1 row)
 
 -- Metadata gives us a powerful way to query the ledger, For example, we can
@@ -155,14 +155,14 @@ WHERE e.metadata ->> 'payment_id' = 'p_123'
 ORDER BY 1;
            transfer_id           |          name          | amount 
 ---------------------------------+------------------------+--------
- pglt_01K8KZNDE3F6VTM7QC0GMV44X8 | user1.external         | -50.00
- pglt_01K8KZNDE3F6VTM7QC0GMV44X8 | user1.receivables      |  50.00
- pglt_01K8KZNDE6FBPRGK0EEE8ZG78X | user1.receivables      | -49.50
- pglt_01K8KZNDE6FBPRGK0EEE8ZG78X | user1.available        |  49.50
- pglt_01K8KZNDE7FEY9SV4KSZZ14TFJ | user1.available        | -20.00
- pglt_01K8KZNDE7FEY9SV4KSZZ14TFJ | user1.pending_outbound |  20.00
- pglt_01K8KZNDE8EWCBEZZW8SS6NM1D | user1.pending_outbound | -20.00
- pglt_01K8KZNDE8EWCBEZZW8SS6NM1D | user1.external         |  20.00
+ pglt_01K8M3Y0B1ENRV6VNFR6JMAXQD | user1.external         | -50.00
+ pglt_01K8M3Y0B1ENRV6VNFR6JMAXQD | user1.receivables      |  50.00
+ pglt_01K8M3Y0B3EZ89BYV9W8K4FS4H | user1.receivables      | -49.50
+ pglt_01K8M3Y0B3EZ89BYV9W8K4FS4H | user1.available        |  49.50
+ pglt_01K8M3Y0B4E5TA0E2MDZ7YZ35Q | user1.available        | -20.00
+ pglt_01K8M3Y0B4E5TA0E2MDZ7YZ35Q | user1.pending_outbound |  20.00
+ pglt_01K8M3Y0B4EWZTG4ZR2VEJ2KYS | user1.pending_outbound | -20.00
+ pglt_01K8M3Y0B4EWZTG4ZR2VEJ2KYS | user1.external         |  20.00
 (8 rows)
 
 -- And then we can visualize that data in various ways. For example, we can
@@ -179,9 +179,40 @@ ORDER BY 1
 \crosstabview transfer_id name amount
            transfer_id           | user1.external | user1.receivables | user1.available | user1.pending_outbound 
 ---------------------------------+----------------+-------------------+-----------------+------------------------
- pglt_01K8KZNDE3F6VTM7QC0GMV44X8 |         -50.00 |             50.00 |                 |                       
- pglt_01K8KZNDE6FBPRGK0EEE8ZG78X |                |            -49.50 |           49.50 |                       
- pglt_01K8KZNDE7FEY9SV4KSZZ14TFJ |                |                   |          -20.00 |                  20.00
- pglt_01K8KZNDE8EWCBEZZW8SS6NM1D |          20.00 |                   |                 |                 -20.00
+ pglt_01K8M3Y0B1ENRV6VNFR6JMAXQD |         -50.00 |             50.00 |                 |                       
+ pglt_01K8M3Y0B3EZ89BYV9W8K4FS4H |                |            -49.50 |           49.50 |                       
+ pglt_01K8M3Y0B4E5TA0E2MDZ7YZ35Q |                |                   |          -20.00 |                  20.00
+ pglt_01K8M3Y0B4EWZTG4ZR2VEJ2KYS |          20.00 |                   |                 |                 -20.00
 (4 rows)
+
+-- We can even get fancier and sum the entries for each account in the table:
+WITH entries AS (
+    SELECT
+        e.transfer_id,
+        a.name,
+        e.amount
+    FROM pgledger_entries_view e
+    INNER JOIN pgledger_accounts_view a ON e.account_id = a.id
+    WHERE e.metadata ->> 'payment_id' = 'p_123'
+)
+SELECT * FROM (
+    SELECT * FROM entries
+    UNION
+    SELECT
+        '--- SUMS ---' AS transfer_id,
+        name,
+        sum(amount)
+    FROM entries
+    GROUP BY 1, 2
+)
+ORDER BY transfer_id
+\crosstabview transfer_id name amount
+           transfer_id           | user1.external | user1.receivables | user1.available | user1.pending_outbound 
+---------------------------------+----------------+-------------------+-----------------+------------------------
+ pglt_01K8M3Y0B1ENRV6VNFR6JMAXQD |         -50.00 |             50.00 |                 |                       
+ pglt_01K8M3Y0B3EZ89BYV9W8K4FS4H |                |            -49.50 |           49.50 |                       
+ pglt_01K8M3Y0B4E5TA0E2MDZ7YZ35Q |                |                   |          -20.00 |                  20.00
+ pglt_01K8M3Y0B4EWZTG4ZR2VEJ2KYS |          20.00 |                   |                 |                 -20.00
+ --- SUMS ---                    |         -30.00 |              0.50 |           29.50 |                   0.00
+(5 rows)
 
