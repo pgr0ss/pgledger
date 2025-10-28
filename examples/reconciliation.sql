@@ -28,7 +28,7 @@ SELECT * FROM pgledger_create_transfer(
     :'user1_external_id',
     :'user1_receivables_id',
     50.00,
-    metadata => '{"payment_id": "p_123"}'
+    metadata => '{"kind": "payment_created", "payment_id": "p_123"}'
 );
 
 -- The user also creates another $50 payment:
@@ -36,7 +36,7 @@ SELECT * FROM pgledger_create_transfer(
     :'user1_external_id',
     :'user1_receivables_id',
     50.00,
-    metadata => '{"payment_id": "p_456"}'
+    metadata => '{"kind": "payment_created", "payment_id": "p_456"}'
 );
 
 -- Next, the funds arrive in our account for one of the payments, so we remove
@@ -45,7 +45,7 @@ SELECT * FROM pgledger_create_transfer(
     :'user1_receivables_id',
     :'user1_available_id',
     50.00,
-    metadata => '{"payment_id": "p_456"}'
+    metadata => '{"kind": "payment_received", "payment_id": "p_456"}'
 );
 
 -- Now, we can query the receivables account and see that the balance is still
@@ -71,7 +71,7 @@ SELECT * FROM pgledger_create_transfer(
     :'user1_receivables_id',
     :'user1_available_id',
     49.50,
-    metadata => '{"payment_id": "p_123"}'
+    metadata => '{"kind": "payment_received", "payment_id": "p_123"}'
 );
 
 -- Now, this discrepency will show up in the rollup, and it will tell us how much it's off by:
@@ -90,7 +90,7 @@ SELECT * FROM pgledger_create_transfer(
     :'user1_available_id',
     :'user1_pending_outbound_id',
     20.00,
-    metadata => '{"payment_id": "p_123"}'
+    metadata => '{"kind": "refund_created", "payment_id": "p_123"}'
 );
 
 -- Once we get confirmation that that refund was sent, We can move the money
@@ -102,8 +102,11 @@ SELECT * FROM pgledger_create_transfer(
     :'user1_external_id',
     20.00,
     event_at => '2025-07-21T12:45:54.123Z',
-    metadata => '{"payment_id": "p_123",
-        "webhook_id": "webhook_123"}'
+    metadata => '{
+        "kind": "refund_sent",
+        "payment_id": "p_123",
+        "webhook_id": "webhook_123"
+    }'
 );
 
 -- Metadata gives us a powerful way to query the ledger, For example, we can
@@ -111,6 +114,7 @@ SELECT * FROM pgledger_create_transfer(
 -- can help us understand the state of a payment or account:
 SELECT
     e.transfer_id,
+    e.metadata ->> 'kind' AS kind,
     a.name,
     e.amount
 FROM pgledger_entries_view e
@@ -122,19 +126,19 @@ ORDER BY 1;
 -- take the previous query and display in a column-oriented view, making it
 -- really easy to see the flow of money:
 SELECT
-    e.transfer_id,
+    concat_ws(' - ', e.transfer_id, e.metadata ->> 'kind') AS transfer,
     a.name,
     e.amount
 FROM pgledger_entries_view e
 INNER JOIN pgledger_accounts_view a ON e.account_id = a.id
 WHERE e.metadata ->> 'payment_id' = 'p_123'
 ORDER BY 1
-\crosstabview transfer_id name amount
+\crosstabview transfer name amount
 
 -- We can even get fancier and sum the entries for each account in the table:
 WITH entries AS ( -- noqa: PRS, the \crosstabview above breaks parsing, so we have to ignore sqlfluff from here
     SELECT
-        e.transfer_id,
+        concat_ws(' - ', e.transfer_id, e.metadata ->> 'kind') AS transfer,
         a.name,
         e.amount
     FROM pgledger_entries_view e
@@ -146,11 +150,11 @@ SELECT * FROM (
     SELECT * FROM entries
     UNION
     SELECT
-        '--- SUMS ---' AS transfer_id,
+        '--- SUMS ---' AS transfer,
         name,
         sum(amount)
     FROM entries
     GROUP BY 1, 2
 )
-ORDER BY transfer_id
-\crosstabview transfer_id name amount
+ORDER BY transfer
+\crosstabview transfer name amount
