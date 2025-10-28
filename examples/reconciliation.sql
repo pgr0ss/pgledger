@@ -131,9 +131,8 @@ WHERE e.metadata ->> 'payment_id' = 'p_123'
 ORDER BY 1
 \crosstabview transfer_id name amount
 
-
 -- We can even get fancier and sum the entries for each account in the table:
-WITH entries AS (
+WITH entries AS ( -- noqa: PRS, the \crosstabview above breaks parsing, so we have to ignore sqlfluff from here
     SELECT
         e.transfer_id,
         a.name,
