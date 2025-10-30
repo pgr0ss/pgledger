@@ -56,5 +56,8 @@ jobs:
     needs: test
     runs-on: ubuntu-24.04
     steps:
+      - name: Fail unless required checks pass
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}
+        run: exit 1
       - name: All matrix tests passed
         run: echo "All PostgreSQL versions tested successfully"
