@@ -52,8 +52,13 @@ jobs:
           args: --timeout 2m --verbose
 
   all-tests-passed:
+    if: ${{ always() }}
     needs: test
     runs-on: ubuntu-24.04
     steps:
+      # This approach is from: https://github.com/orgs/community/discussions/28864
+      - name: Fail unless required checks pass
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}
+        run: exit 1
       - name: All matrix tests passed
         run: echo "All PostgreSQL versions tested successfully"
