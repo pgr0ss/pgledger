@@ -5,7 +5,7 @@ dialect = postgres
 max_line_length = 120
 
 # Allow "SELECT *"
-exclude_rules = ambiguous.column_count
+exclude_rules = ambiguous.column_count, structure.column_order
 
 # CPU processes to use while linting.
 # The default is "single threaded" to allow easy debugging, but this
