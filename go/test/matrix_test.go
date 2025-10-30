@@ -13,7 +13,7 @@ func TestMatrixPostgresVersion(t *testing.T) {
 	if expectedVersion == "" {
 		expectedVersion = "18.0"
 	}
-	assert.Regexp(t, `\d+\.\d+ ZZZ`, expectedVersion)
+	assert.Regexp(t, `\d+\.\d+`, expectedVersion)
 
 	conn := dbconn(t)
 
