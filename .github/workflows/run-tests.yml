@@ -52,6 +52,7 @@ jobs:
           args: --timeout 2m --verbose
 
   all-tests-passed:
+    if: ${{ always() }}
     needs: test
     runs-on: ubuntu-24.04
     steps:
