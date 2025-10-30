@@ -1,0 +1,222 @@
+-- This file contains the sql queries plus their output, but we set the filetype to sql for better syntax highlighting
+-- vim: set filetype=sql:
+
+-- This is a fully working example script that shows reconcilation strategies.
+--
+-- Note that it uses `\gset` to store sql responses as variables. For example,
+-- `\gset foo_` creates variables for each column in the response like
+-- `foo_col1`, `foo_col2`, etc. These variables can then be used like
+-- `:'foo1_col`.
+-- The entire script can be passed to psql. If you are running postgres via the
+-- pgledger docker compose, you can run this script with:
+--
+--   cat reconciliation.sql | \
+--     docker compose exec --no-TTY postgres psql -U pgledger --echo-queries --no-psqlrc
+--
+-- The goal of this script is to show some reconcilation examples. Reconcilation is the process
+-- by which we check that our view of the world matches what we expect.
+-- Let's start with a simple payment flow example, similar to the basic-example.sql script:
+SELECT id FROM pgledger_create_account('user1.external', 'USD') \gset user1_external_
+SELECT id FROM pgledger_create_account('user1.receivables', 'USD') \gset user1_receivables_
+SELECT id FROM pgledger_create_account('user1.available', 'USD') \gset user1_available_
+SELECT id FROM pgledger_create_account('user1.pending_outbound', 'USD') \gset user1_pending_outbound_
+-- The first step in the flow is the user initiates a $50 payment, and we are
+-- waiting for funds to arrive. The difference this time is we'll use some
+-- metadata to help us track what's going on:
+SELECT * FROM pgledger_create_transfer(
+    :'user1_external_id',
+    :'user1_receivables_id',
+    50.00,
+    metadata => '{"kind": "payment_created", "payment_id": "p_123"}'
+);
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            |                      metadata                      
+---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------------------------------------------------
+ pglt_01K8VBAXZ3F559ZVVKCC83TDX1 | pgla_01K8VBAXZ0EJGV03ZPH6ETD8KP | pgla_01K8VBAXZ1ER0BM9Q6G45EF9C5 |  50.00 | 2025-10-30 20:00:53.730576+00 | 2025-10-30 20:00:53.730576+00 | {"kind": "payment_created", "payment_id": "p_123"}
+(1 row)
+
+-- The user also creates another $50 payment:
+SELECT * FROM pgledger_create_transfer(
+    :'user1_external_id',
+    :'user1_receivables_id',
+    50.00,
+    metadata => '{"kind": "payment_created", "payment_id": "p_456"}'
+);
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            |                      metadata                      
+---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------------------------------------------------
+ pglt_01K8VBAXZ4FV7RDJ76RYXZBDQ7 | pgla_01K8VBAXZ0EJGV03ZPH6ETD8KP | pgla_01K8VBAXZ1ER0BM9Q6G45EF9C5 |  50.00 | 2025-10-30 20:00:53.732451+00 | 2025-10-30 20:00:53.732451+00 | {"kind": "payment_created", "payment_id": "p_456"}
+(1 row)
+
+-- Next, the funds arrive in our account for one of the payments, so we remove
+-- them from receivables and make them available:
+SELECT * FROM pgledger_create_transfer(
+    :'user1_receivables_id',
+    :'user1_available_id',
+    50.00,
+    metadata => '{"kind": "payment_received", "payment_id": "p_456"}'
+);
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            |                      metadata                       
+---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+-----------------------------------------------------
+ pglt_01K8VBAXZ6EXA9W1JVRPSDX6D2 | pgla_01K8VBAXZ1ER0BM9Q6G45EF9C5 | pgla_01K8VBAXZ1FHFTPDTB8A8E7XAN |  50.00 | 2025-10-30 20:00:53.734144+00 | 2025-10-30 20:00:53.734144+00 | {"kind": "payment_received", "payment_id": "p_456"}
+(1 row)
+
+-- Now, we can query the receivables account and see that the balance is still
+-- $50, meaning we are waiting on more funds to arrive:
+SELECT balance FROM pgledger_accounts_view
+WHERE id =:'user1_receivables_id';
+ balance 
+---------
+   50.00
+(1 row)
+
+-- But how do we know which payment we're still waiting for? If we use metadata
+-- on each transfer which ties it to a payment_id, then we can do interesting
+-- rollups, such as summing entries by payment_id. Any payment we've received
+-- funds for will zero out (since the incoming $50 and outgoing -$50 sum to 0):
+SELECT
+    metadata ->> 'payment_id' AS payment_id,
+    sum(amount) AS sum
+FROM pgledger_entries_view
+WHERE account_id =:'user1_receivables_id'
+GROUP BY 1;
+ payment_id |  sum  
+------------+-------
+ p_123      | 50.00
+ p_456      |  0.00
+(2 rows)
+
+-- This strategy can help us find other issues, such as when the amount of
+-- funds we received weren't what we expectd. For example, say we eventually
+-- received the funds for the first payment but it was short:
+SELECT * FROM pgledger_create_transfer(
+    :'user1_receivables_id',
+    :'user1_available_id',
+    49.50,
+    metadata => '{"kind": "payment_received", "payment_id": "p_123"}'
+);
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            |                      metadata                       
+---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+-----------------------------------------------------
+ pglt_01K8VBAXZ8E1BS08W6H9AZX79P | pgla_01K8VBAXZ1ER0BM9Q6G45EF9C5 | pgla_01K8VBAXZ1FHFTPDTB8A8E7XAN |  49.50 | 2025-10-30 20:00:53.735846+00 | 2025-10-30 20:00:53.735846+00 | {"kind": "payment_received", "payment_id": "p_123"}
+(1 row)
+
+-- Now, this discrepency will show up in the rollup, and it will tell us how much it's off by:
+SELECT
+    metadata ->> 'payment_id' AS payment_id,
+    sum(amount) AS sum
+FROM pgledger_entries_view
+WHERE account_id =:'user1_receivables_id'
+GROUP BY 1
+HAVING sum(amount) != 0;
+ payment_id | sum  
+------------+------
+ p_123      | 0.50
+(1 row)
+
+-- Continuing the example, let's issue a partial refund of the payment. When we
+-- issue the refund, we move the money into the pending_outbound account to
+-- hold it until we get confirmation that it was sent
+SELECT * FROM pgledger_create_transfer(
+    :'user1_available_id',
+    :'user1_pending_outbound_id',
+    20.00,
+    metadata => '{"kind": "refund_created", "payment_id": "p_123"}'
+);
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            |                     metadata                      
+---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+---------------------------------------------------
+ pglt_01K8VBAXZ9E6RSC7KX3TER5K4X | pgla_01K8VBAXZ1FHFTPDTB8A8E7XAN | pgla_01K8VBAXZ2EGNTBQZXS7CAAG4N |  20.00 | 2025-10-30 20:00:53.736954+00 | 2025-10-30 20:00:53.736954+00 | {"kind": "refund_created", "payment_id": "p_123"}
+(1 row)
+
+-- Once we get confirmation that that refund was sent, We can move the money
+-- back to the user's external account (e.g. their credit/debit card). The
+-- metadata can be whatever JSON we want, so we can include as many fields as
+-- will be helpful:
+SELECT * FROM pgledger_create_transfer(
+    :'user1_pending_outbound_id',
+    :'user1_external_id',
+    20.00,
+    event_at => '2025-07-21T12:45:54.123Z',
+    metadata => '{
+        "kind": "refund_sent",
+        "payment_id": "p_123",
+        "webhook_id": "webhook_123"
+    }'
+);
+               id                |         from_account_id         |          to_account_id          | amount |          created_at          |          event_at          |                                  metadata                                   
+---------------------------------+---------------------------------+---------------------------------+--------+------------------------------+----------------------------+-----------------------------------------------------------------------------
+ pglt_01K8VBAXZ9FGR9QJN2XVW0JDKP | pgla_01K8VBAXZ2EGNTBQZXS7CAAG4N | pgla_01K8VBAXZ0EJGV03ZPH6ETD8KP |  20.00 | 2025-10-30 20:00:53.73757+00 | 2025-07-21 12:45:54.123+00 | {"kind": "refund_sent", "payment_id": "p_123", "webhook_id": "webhook_123"}
+(1 row)
+
+-- Metadata gives us a powerful way to query the ledger, For example, we can
+-- track the history of a specific payment through the various accounts which
+-- can help us understand the state of a payment or account:
+SELECT
+    e.transfer_id,
+    e.metadata ->> 'kind' AS kind,
+    a.name,
+    e.amount
+FROM pgledger_entries_view e
+INNER JOIN pgledger_accounts_view a ON e.account_id = a.id
+WHERE e.metadata ->> 'payment_id' = 'p_123'
+ORDER BY 1;
+           transfer_id           |       kind       |          name          | amount 
+---------------------------------+------------------+------------------------+--------
+ pglt_01K8VBAXZ3F559ZVVKCC83TDX1 | payment_created  | user1.external         | -50.00
+ pglt_01K8VBAXZ3F559ZVVKCC83TDX1 | payment_created  | user1.receivables      |  50.00
+ pglt_01K8VBAXZ8E1BS08W6H9AZX79P | payment_received | user1.receivables      | -49.50
+ pglt_01K8VBAXZ8E1BS08W6H9AZX79P | payment_received | user1.available        |  49.50
+ pglt_01K8VBAXZ9E6RSC7KX3TER5K4X | refund_created   | user1.available        | -20.00
+ pglt_01K8VBAXZ9E6RSC7KX3TER5K4X | refund_created   | user1.pending_outbound |  20.00
+ pglt_01K8VBAXZ9FGR9QJN2XVW0JDKP | refund_sent      | user1.pending_outbound | -20.00
+ pglt_01K8VBAXZ9FGR9QJN2XVW0JDKP | refund_sent      | user1.external         |  20.00
+(8 rows)
+
+-- And then we can visualize that data in various ways. For example, we can
+-- take the previous query and display in a column-oriented view, making it
+-- really easy to see the flow of money:
+SELECT
+    concat_ws(' - ', e.transfer_id, e.metadata ->> 'kind') AS transfer,
+    a.name,
+    e.amount
+FROM pgledger_entries_view e
+INNER JOIN pgledger_accounts_view a ON e.account_id = a.id
+WHERE e.metadata ->> 'payment_id' = 'p_123'
+ORDER BY 1
+\crosstabview transfer name amount
+                      transfer                      | user1.external | user1.receivables | user1.available | user1.pending_outbound 
+----------------------------------------------------+----------------+-------------------+-----------------+------------------------
+ pglt_01K8VBAXZ3F559ZVVKCC83TDX1 - payment_created  |         -50.00 |             50.00 |                 |                       
+ pglt_01K8VBAXZ8E1BS08W6H9AZX79P - payment_received |                |            -49.50 |           49.50 |                       
+ pglt_01K8VBAXZ9E6RSC7KX3TER5K4X - refund_created   |                |                   |          -20.00 |                  20.00
+ pglt_01K8VBAXZ9FGR9QJN2XVW0JDKP - refund_sent      |          20.00 |                   |                 |                 -20.00
+(4 rows)
+
+-- We can even get fancier and sum the entries for each account in the table:
+WITH entries AS ( -- noqa: PRS, the \crosstabview above breaks parsing, so we have to ignore sqlfluff from here
+    SELECT
+        concat_ws(' - ', e.transfer_id, e.metadata ->> 'kind') AS transfer,
+        a.name,
+        e.amount
+    FROM pgledger_entries_view e
+    INNER JOIN pgledger_accounts_view a ON e.account_id = a.id
+    WHERE e.metadata ->> 'payment_id' = 'p_123'
+)
+SELECT * FROM (
+    SELECT * FROM entries
+    UNION
+    SELECT
+        '--- SUMS ---' AS transfer,
+        name,
+        sum(amount)
+    FROM entries
+    GROUP BY 1, 2
+)
+ORDER BY transfer
+\crosstabview transfer name amount
+                      transfer                      | user1.external | user1.receivables | user1.available | user1.pending_outbound 
+----------------------------------------------------+----------------+-------------------+-----------------+------------------------
+ pglt_01K8VBAXZ3F559ZVVKCC83TDX1 - payment_created  |         -50.00 |             50.00 |                 |                       
+ pglt_01K8VBAXZ8E1BS08W6H9AZX79P - payment_received |                |            -49.50 |           49.50 |                       
+ pglt_01K8VBAXZ9E6RSC7KX3TER5K4X - refund_created   |                |                   |          -20.00 |                  20.00
+ pglt_01K8VBAXZ9FGR9QJN2XVW0JDKP - refund_sent      |          20.00 |                   |                 |                 -20.00
+ --- SUMS ---                                       |         -30.00 |              0.50 |           29.50 |                   0.00
+(5 rows)
+
