@@ -184,6 +184,7 @@ Bytes/transfer: 743
 ## Development
 
 While the implementation of `pgledger` is all SQL, I do use various tools to help with the development:
+- [Mise](https://mise.jdx.dev/) for managing tools and dependencies
 - [Go](https://go.dev/) for writing tests
 - [just](https://github.com/casey/just) for running tasks (e.g. `just check` to run the full suite of tests and linters)
 - [uv](https://docs.astral.sh/uv/) for running [sqlfluff](https://github.com/sqlfluff/sqlfluff), the SQL formatter/linter written in Python
@@ -192,7 +193,9 @@ While the implementation of `pgledger` is all SQL, I do use various tools to hel
 If you're on MacOS, these tools can all be installed via [Homebrew](https://brew.sh/):
 
 ```bash
-brew install go just uv docker-desktop
+brew install mise docker-desktop
+
+mise install
 ```
 
 Then you can run PostgreSQL in a docker container:

@@ -1,0 +1,8 @@
+version: "2"
+linters:
+  enable:
+    - modernize
+formatters:
+  enable:
+    - gofmt
+    - gofumpt

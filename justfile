@@ -1,7 +1,5 @@
 dbname := "pgledger"
 
-MODERNIZE_CMD := "golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest"
-
 psql:
   docker compose exec postgres env PGPASSWORD={{dbname}} psql -U {{dbname}} {{dbname}}
 
@@ -35,7 +33,7 @@ benchmark:
 performance_check duration='10s':
   cd go && go run performance_check.go --duration {{duration}}
 
-lint: deadcode modernize lint-sql
+lint: deadcode lint-sql golangci-lint
 
 deadcode:
   #!/usr/bin/env bash
@@ -51,8 +49,8 @@ deadcode:
       echo "No dead code"
   fi
 
-modernize:
-  cd go && go run {{MODERNIZE_CMD}} -test ./...
+golangci-lint:
+  cd go && golangci-lint run --verbose
 
 lint-sql:
   uvx sqlfluff@3.5.0 lint --verbose
