@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        postgres_version: ["15.14", "16.10", "17.6", "18.0"]
+        postgres_version: ["15", "16", "17", "18"]
 
     steps:
       - uses: actions/checkout@v5
@@ -33,9 +33,12 @@ jobs:
           cache-dependency-path: "go/go.sum"
 
       - name: Start Docker Compose
-        run: docker compose up --wait
+        run: docker compose up --pull always --wait
         env:
           POSTGRES_VERSION: ${{ matrix.postgres_version }}
+
+      - name: Print PostgreSQL version
+        run: just --timestamp dbversion
 
       - name: Run tests and linters
         run: just --timestamp check

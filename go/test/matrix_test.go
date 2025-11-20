@@ -1,6 +1,7 @@
 package test
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -11,17 +12,17 @@ import (
 func TestMatrixPostgresVersion(t *testing.T) {
 	expectedVersion := os.Getenv("POSTGRES_VERSION")
 	if expectedVersion == "" {
-		expectedVersion = "18.0"
+		expectedVersion = "18"
 	}
-	assert.Regexp(t, `\d+\.\d+`, expectedVersion)
+	assert.Regexp(t, `^\d+$`, expectedVersion)
 
 	conn := dbconn(t)
 
-	rows, err := conn.Query(t.Context(), "select * from version()")
+	rows, err := conn.Query(t.Context(), "select version()")
 	assert.NoError(t, err)
 
 	version, err := pgx.CollectExactlyOneRow(rows, pgx.RowTo[string])
 	assert.NoError(t, err)
 
-	assert.Contains(t, version, expectedVersion)
+	assert.Contains(t, version, fmt.Sprintf("PostgreSQL %s.", expectedVersion))
 }
