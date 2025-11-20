@@ -3,6 +3,9 @@ dbname := "pgledger"
 psql:
   docker compose exec postgres env PGPASSWORD={{dbname}} psql -U {{dbname}} {{dbname}}
 
+dbversion:
+  docker compose exec postgres env PGPASSWORD={{dbname}} psql -U {{dbname}} {{dbname}} -c 'select version();'
+
 dbclean:
   docker compose exec postgres dropdb --force -U {{dbname}} {{dbname}} || echo "db doesn't exist"
   docker compose exec postgres createdb -U {{dbname}} {{dbname}}
