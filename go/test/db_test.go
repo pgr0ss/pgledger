@@ -57,6 +57,23 @@ func TestAccountsThatCannotBePositive(t *testing.T) {
 	assert.Equal(t, "0", foundAccount2.Balance)
 }
 
+func TestAccountMetadata(t *testing.T) {
+	conn := setupTest(t)
+
+	// No metadata
+	account1 := queryOne[Account](t, conn, "select * from pgledger_create_account($1, $2)", "no-metadata", "USD")
+
+	// With regular parameter
+	account2 := queryOne[Account](t, conn, "select * from pgledger_create_account($1, $2, $3, $4, $5)", "no-metadata", "USD", true, true, `{"a": "b"}`)
+
+	// With named parameter
+	account3 := queryOne[Account](t, conn, "select * from pgledger_create_account($1, $2, metadata => $3)", "no-metadata", "USD", `{"c": "d"}`)
+
+	assert.Nil(t, account1.Metadata)
+	assert.Equal(t, `{"a": "b"}`, *account2.Metadata)
+	assert.Equal(t, `{"c": "d"}`, *account3.Metadata)
+}
+
 func TestCreateTransfer(t *testing.T) {
 	conn := setupTest(t)
 
