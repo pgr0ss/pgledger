@@ -47,6 +47,7 @@ CREATE TABLE pgledger_accounts (
     version BIGINT NOT NULL DEFAULT 0,
     allow_negative_balance BOOLEAN NOT NULL,
     allow_positive_balance BOOLEAN NOT NULL,
+    metadata JSONB,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
@@ -89,6 +90,7 @@ SELECT
     version,
     allow_negative_balance,
     allow_positive_balance,
+    metadata,
     created_at,
     updated_at
 FROM pgledger_accounts;
@@ -123,14 +125,15 @@ CREATE OR REPLACE FUNCTION pgledger_create_account(
     name TEXT,
     currency TEXT,
     allow_negative_balance BOOLEAN DEFAULT TRUE,
-    allow_positive_balance BOOLEAN DEFAULT TRUE
+    allow_positive_balance BOOLEAN DEFAULT TRUE,
+    metadata JSONB DEFAULT NULL
 )
 RETURNS SETOF PGLEDGER_ACCOUNTS_VIEW
 AS $$
 BEGIN
     RETURN QUERY
-    INSERT INTO pgledger_accounts (name, currency, allow_negative_balance, allow_positive_balance, created_at, updated_at)
-    VALUES (name, currency, allow_negative_balance, allow_positive_balance, now(), now())
+    INSERT INTO pgledger_accounts (name, currency, allow_negative_balance, allow_positive_balance, metadata, created_at, updated_at)
+    VALUES (name, currency, allow_negative_balance, allow_positive_balance, metadata, now(), now())
     RETURNING *;
 END;
 $$ LANGUAGE plpgsql;

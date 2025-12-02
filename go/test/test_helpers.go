@@ -26,6 +26,7 @@ type Account struct {
 	Version              int
 	AllowNegativeBalance bool
 	AllowPositiveBalance bool
+	Metadata             *string
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 }
