@@ -16,35 +16,37 @@
 -- We're going to simulate a simple payment flow. First, we create our accounts:
 SELECT id FROM pgledger_create_account('user1.external', 'USD') \gset user1_external_
 SELECT id FROM pgledger_create_account('user1.receivables', 'USD') \gset user1_receivables_
-SELECT id FROM pgledger_create_account('user1.available', 'USD') \gset user1_available_
+-- Note that we may want to prevent some accounts from going negative or positive:
+SELECT id FROM pgledger_create_account('user1.available', 'USD', allow_negative_balance => false) \gset user1_available_
 SELECT id FROM pgledger_create_account('user1.pending_outbound', 'USD') \gset user1_pending_outbound_
--- We can query an account to see what it looks like at the beginning.
+-- We can query accounts to see what they looks like at the beginning.
 SELECT * FROM pgledger_accounts_view
-WHERE id =:'user1_external_id';
-               id                |      name      | currency | balance | version | allow_negative_balance | allow_positive_balance |          created_at           |          updated_at           
----------------------------------+----------------+----------+---------+---------+------------------------+------------------------+-------------------------------+-------------------------------
- pgla_01K8KW44WGFBNVZ0WC5WX0A9QT | user1.external | USD      |       0 |       0 | t                      | t                      | 2025-10-27 22:20:21.774992+00 | 2025-10-27 22:20:21.774992+00
-(1 row)
+WHERE id IN (:'user1_external_id', :'user1_available_id');
+               id                |      name       | currency | balance | version | allow_negative_balance | allow_positive_balance | metadata |          created_at           |          updated_at
+---------------------------------+-----------------+----------+---------+---------+------------------------+------------------------+----------+-------------------------------+-------------------------------
+ pgla_01KBE8WV6PE2BSZHVKDD5TSEBZ | user1.external  | USD      |       0 |       0 | t                      | t                      |          | 2025-12-02 00:55:12.852705+00 | 2025-12-02 00:55:12.852705+00
+ pgla_01KBE8WV6QFFA9HJVQQFSZWY69 | user1.available | USD      |       0 |       0 | f                      | t                      |          | 2025-12-02 00:55:12.855693+00 | 2025-12-02 00:55:12.855693+00
+(2 rows)
 
 -- The first step in the flow is a $50 payment is created and we are waiting for funds to arrive:
 SELECT * FROM pgledger_create_transfer(:'user1_external_id',:'user1_receivables_id', 50.00);
-               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata 
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
- pglt_01K8KW44WMFGHBYQK301HH4J3F | pgla_01K8KW44WGFBNVZ0WC5WX0A9QT | pgla_01K8KW44WHFNZA243705PBPBVH |  50.00 | 2025-10-27 22:20:21.779585+00 | 2025-10-27 22:20:21.779585+00 | 
+ pglt_01KBE8WV6SEDFBB5EY1SDH8VTW | pgla_01KBE8WV6PE2BSZHVKDD5TSEBZ | pgla_01KBE8WV6QESATM17SHW189Q0H |  50.00 | 2025-12-02 00:55:12.856421+00 | 2025-12-02 00:55:12.856421+00 |
 (1 row)
 
 -- Next, the funds arrive in our account, so we remove them from receivables and make them available:
 SELECT * FROM pgledger_create_transfer(:'user1_receivables_id',:'user1_available_id', 50.00);
-               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata 
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
- pglt_01K8KW44WNFDAVFY5BEXV08VP1 | pgla_01K8KW44WHFNZA243705PBPBVH | pgla_01K8KW44WJFRSABYAZK38R44CQ |  50.00 | 2025-10-27 22:20:21.781562+00 | 2025-10-27 22:20:21.781562+00 | 
+ pglt_01KBE8WV6TEJN8WXVS7QACJ5ZT | pgla_01KBE8WV6QESATM17SHW189Q0H | pgla_01KBE8WV6QFFA9HJVQQFSZWY69 |  50.00 | 2025-12-02 00:55:12.858091+00 | 2025-12-02 00:55:12.858091+00 |
 (1 row)
 
 -- Now, we can query the accounts and see the balances. We aren't waiting on
 -- any more funds, so the receivables balance is 0:
 SELECT balance FROM pgledger_accounts_view
 WHERE id =:'user1_receivables_id';
- balance 
+ balance
 ---------
     0.00
 (1 row)
@@ -53,19 +55,19 @@ WHERE id =:'user1_receivables_id';
 SELECT * FROM pgledger_entries_view
 WHERE account_id =:'user1_receivables_id'
 ORDER BY account_version;
-               id                |           account_id            |           transfer_id           | amount | account_previous_balance | account_current_balance | account_version |          created_at           |           event_at            | metadata 
+               id                |           account_id            |           transfer_id           | amount | account_previous_balance | account_current_balance | account_version |          created_at           |           event_at            | metadata
 ---------------------------------+---------------------------------+---------------------------------+--------+--------------------------+-------------------------+-----------------+-------------------------------+-------------------------------+----------
- pgle_01K8KW44WNEM0B5AKEF3NRAJJ2 | pgla_01K8KW44WHFNZA243705PBPBVH | pglt_01K8KW44WMFGHBYQK301HH4J3F |  50.00 |                     0.00 |                   50.00 |               1 | 2025-10-27 22:20:21.779585+00 | 2025-10-27 22:20:21.779585+00 | 
- pgle_01K8KW44WNFJ2RF0NPRZ7PQCY0 | pgla_01K8KW44WHFNZA243705PBPBVH | pglt_01K8KW44WNFDAVFY5BEXV08VP1 | -50.00 |                    50.00 |                    0.00 |               2 | 2025-10-27 22:20:21.781562+00 | 2025-10-27 22:20:21.781562+00 | 
+ pgle_01KBE8WV6SFH3BBDNNJ4DT7AMA | pgla_01KBE8WV6QESATM17SHW189Q0H | pglt_01KBE8WV6SEDFBB5EY1SDH8VTW |  50.00 |                     0.00 |                   50.00 |               1 | 2025-12-02 00:55:12.856421+00 | 2025-12-02 00:55:12.856421+00 |
+ pgle_01KBE8WV6TEPTV5AHRG3FNWSY1 | pgla_01KBE8WV6QESATM17SHW189Q0H | pglt_01KBE8WV6TEJN8WXVS7QACJ5ZT | -50.00 |                    50.00 |                    0.00 |               2 | 2025-12-02 00:55:12.858091+00 | 2025-12-02 00:55:12.858091+00 |
 (2 rows)
 
 -- Continuing the example, let's issue a partial refund of the payment. When we
 -- issue the refund, we move the money into the pending_outbound account to
 -- hold it until we get confirmation that it was sent
 SELECT * FROM pgledger_create_transfer(:'user1_available_id',:'user1_pending_outbound_id', 20.00);
-               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata 
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
- pglt_01K8KW44WPFG0TY4D37ZTV4ZB8 | pgla_01K8KW44WJFRSABYAZK38R44CQ | pgla_01K8KW44WKECJAN13GP605BMYM |  20.00 | 2025-10-27 22:20:21.782565+00 | 2025-10-27 22:20:21.782565+00 | 
+ pglt_01KBE8WV6VECBT3C6EJRRMP0QV | pgla_01KBE8WV6QFFA9HJVQQFSZWY69 | pgla_01KBE8WV6QFYTBY62RVFBVFXEY |  20.00 | 2025-12-02 00:55:12.859018+00 | 2025-12-02 00:55:12.859018+00 |
 (1 row)
 
 -- Once we get confirmation that that refund was sent, We can move the money
@@ -83,9 +85,9 @@ FROM
         event_at => '2025-07-21T12:45:54.123Z',
         metadata => '{"webhook_id": "webhook_123"}'
     );
-               id                |         from_account_id         |          to_account_id          | amount |          created_at           |          event_at          |           metadata            
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |          event_at          |           metadata
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+----------------------------+-------------------------------
- pglt_01K8KW44WQF4CSGA6AGV9C4WT8 | pgla_01K8KW44WKECJAN13GP605BMYM | pgla_01K8KW44WGFBNVZ0WC5WX0A9QT |  20.00 | 2025-10-27 22:20:21.783136+00 | 2025-07-21 12:45:54.123+00 | {"webhook_id": "webhook_123"}
+ pglt_01KBE8WV6VF9QTK93YH2ABHPBH | pgla_01KBE8WV6QFYTBY62RVFBVFXEY | pgla_01KBE8WV6PE2BSZHVKDD5TSEBZ |  20.00 | 2025-12-02 00:55:12.859495+00 | 2025-07-21 12:45:54.123+00 | {"webhook_id": "webhook_123"}
 (1 row)
 
 -- Now, we can query the current state. The external account has -$30 ($50
@@ -96,7 +98,7 @@ SELECT
     balance
 FROM pgledger_accounts_view
 WHERE id IN (:'user1_external_id',:'user1_receivables_id',:'user1_available_id',:'user1_pending_outbound_id');
-          name          | balance 
+          name          | balance
 ------------------------+---------
  user1.external         |  -30.00
  user1.receivables      |    0.00
@@ -107,21 +109,21 @@ WHERE id IN (:'user1_external_id',:'user1_receivables_id',:'user1_available_id',
 -- Next, we can simulate an unexpected case. Let's say we initiate a payment
 -- for $10 but we only receive $8 (e.g. due to unexpected fees):
 SELECT * FROM pgledger_create_transfer(:'user1_external_id',:'user1_receivables_id', 10.00);
-               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata 
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
- pglt_01K8KW44WREPPVQRMGBAZG2TBA | pgla_01K8KW44WGFBNVZ0WC5WX0A9QT | pgla_01K8KW44WHFNZA243705PBPBVH |  10.00 | 2025-10-27 22:20:21.784193+00 | 2025-10-27 22:20:21.784193+00 | 
+ pglt_01KBE8WV6WECMBEZF249Z4355D | pgla_01KBE8WV6PE2BSZHVKDD5TSEBZ | pgla_01KBE8WV6QESATM17SHW189Q0H |  10.00 | 2025-12-02 00:55:12.860049+00 | 2025-12-02 00:55:12.860049+00 |
 (1 row)
 
 SELECT * FROM pgledger_create_transfer(:'user1_receivables_id',:'user1_available_id', 8.00);
-               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata 
----------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
- pglt_01K8KW44WRFHYA8AEWVXQZ110M | pgla_01K8KW44WHFNZA243705PBPBVH | pgla_01K8KW44WJFRSABYAZK38R44CQ |   8.00 | 2025-10-27 22:20:21.784663+00 | 2025-10-27 22:20:21.784663+00 | 
+               id                |         from_account_id         |          to_account_id          | amount |          created_at          |           event_at           | metadata
+---------------------------------+---------------------------------+---------------------------------+--------+------------------------------+------------------------------+----------
+ pglt_01KBE8WV6WF6RB5VFWQSPC9KQ6 | pgla_01KBE8WV6QESATM17SHW189Q0H | pgla_01KBE8WV6QFFA9HJVQQFSZWY69 |   8.00 | 2025-12-02 00:55:12.86047+00 | 2025-12-02 00:55:12.86047+00 |
 (1 row)
 
 -- Now, we can see that our receivables balance is not $0 like we expect:
 SELECT balance FROM pgledger_accounts_view
 WHERE id =:'user1_receivables_id';
- balance 
+ balance
 ---------
     2.00
 (1 row)
@@ -130,11 +132,25 @@ WHERE id =:'user1_receivables_id';
 SELECT * FROM pgledger_entries_view
 WHERE account_id =:'user1_receivables_id'
 ORDER BY account_version;
-               id                |           account_id            |           transfer_id           | amount | account_previous_balance | account_current_balance | account_version |          created_at           |           event_at            | metadata 
+               id                |           account_id            |           transfer_id           | amount | account_previous_balance | account_current_balance | account_version |          created_at           |           event_at            | metadata
 ---------------------------------+---------------------------------+---------------------------------+--------+--------------------------+-------------------------+-----------------+-------------------------------+-------------------------------+----------
- pgle_01K8KW44WNEM0B5AKEF3NRAJJ2 | pgla_01K8KW44WHFNZA243705PBPBVH | pglt_01K8KW44WMFGHBYQK301HH4J3F |  50.00 |                     0.00 |                   50.00 |               1 | 2025-10-27 22:20:21.779585+00 | 2025-10-27 22:20:21.779585+00 | 
- pgle_01K8KW44WNFJ2RF0NPRZ7PQCY0 | pgla_01K8KW44WHFNZA243705PBPBVH | pglt_01K8KW44WNFDAVFY5BEXV08VP1 | -50.00 |                    50.00 |                    0.00 |               2 | 2025-10-27 22:20:21.781562+00 | 2025-10-27 22:20:21.781562+00 | 
- pgle_01K8KW44WREYDVGH82991V3B2E | pgla_01K8KW44WHFNZA243705PBPBVH | pglt_01K8KW44WREPPVQRMGBAZG2TBA |  10.00 |                     0.00 |                   10.00 |               3 | 2025-10-27 22:20:21.784193+00 | 2025-10-27 22:20:21.784193+00 | 
- pgle_01K8KW44WRFQMVAES6AXTZYB8M | pgla_01K8KW44WHFNZA243705PBPBVH | pglt_01K8KW44WRFHYA8AEWVXQZ110M |  -8.00 |                    10.00 |                    2.00 |               4 | 2025-10-27 22:20:21.784663+00 | 2025-10-27 22:20:21.784663+00 | 
+ pgle_01KBE8WV6SFH3BBDNNJ4DT7AMA | pgla_01KBE8WV6QESATM17SHW189Q0H | pglt_01KBE8WV6SEDFBB5EY1SDH8VTW |  50.00 |                     0.00 |                   50.00 |               1 | 2025-12-02 00:55:12.856421+00 | 2025-12-02 00:55:12.856421+00 |
+ pgle_01KBE8WV6TEPTV5AHRG3FNWSY1 | pgla_01KBE8WV6QESATM17SHW189Q0H | pglt_01KBE8WV6TEJN8WXVS7QACJ5ZT | -50.00 |                    50.00 |                    0.00 |               2 | 2025-12-02 00:55:12.858091+00 | 2025-12-02 00:55:12.858091+00 |
+ pgle_01KBE8WV6WEKJ9BJFA9VBQ3JXM | pgla_01KBE8WV6QESATM17SHW189Q0H | pglt_01KBE8WV6WECMBEZF249Z4355D |  10.00 |                     0.00 |                   10.00 |               3 | 2025-12-02 00:55:12.860049+00 | 2025-12-02 00:55:12.860049+00 |
+ pgle_01KBE8WV6WFB8B7ASYCB5ZDD9W | pgla_01KBE8WV6QESATM17SHW189Q0H | pglt_01KBE8WV6WF6RB5VFWQSPC9KQ6 |  -8.00 |                    10.00 |                    2.00 |               4 | 2025-12-02 00:55:12.86047+00  | 2025-12-02 00:55:12.86047+00  |
 (4 rows)
 
+-- We can also see that the `allow_negative_balance => false` flag on our
+-- available account prevents transfers which are more than the current
+-- balance:
+SELECT * FROM pgledger_create_transfer(:'user1_available_id', :'user1_pending_outbound_id', 50.00);
+ERROR:  Account (id=pgla_01KBE8WV6QFFA9HJVQQFSZWY69, name=user1.available) does not allow negative balance
+CONTEXT:  PL/pgSQL function pgledger_check_account_balance_constraints(pgledger_accounts) line 5 at RAISE
+SQL statement "SELECT pgledger_check_account_balance_constraints(from_account)"
+PL/pgSQL function pgledger_create_transfers(transfer_request[],timestamp with time zone,jsonb) line 50 at PERFORM
+SQL statement "SELECT * FROM pgledger_create_transfers(
+        transfer_requests => array[(from_account_id, to_account_id, amount)::TRANSFER_REQUEST],
+        event_at => event_at,
+        metadata => metadata
+    )"
+PL/pgSQL function pgledger_create_transfer(text,text,numeric,timestamp with time zone,jsonb) line 4 at RETURN QUERY
