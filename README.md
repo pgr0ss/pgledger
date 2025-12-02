@@ -52,6 +52,78 @@ select created_at, account_version, amount, account_previous_balance, account_cu
 (2 rows)
 ```
 
+### Composability
+
+One of the nice things about SQL is that everything is composable. For example, the `pgledger_create_transfer` function only returns the fields from the `pgledger_transfers_view`:
+
+```sql
+select * from pgledger_create_transfer('pgla_01KBE8WV6PE2BSZHVKDD5TSEBZ', 'pgla_01KBE8WV6QESATM17SHW189Q0H', 10)
+
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata
+---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
+ pglt_01KBEAA5SBF2RRXQ6FYE914X39 | pgla_01KBE8WV6PE2BSZHVKDD5TSEBZ | pgla_01KBE8WV6QESATM17SHW189Q0H |     10 | 2025-12-02 01:19:58.250398+00 | 2025-12-02 01:19:58.250398+00 | [NULL]
+(1 row)
+```
+
+But if you want other fields, you can still do it in a single query by using common table expressions (CTEs) and joining to other views or tables:
+
+```sql
+with transfer as (
+    select * from pgledger_create_transfer('pgla_01KBE8WV6PE2BSZHVKDD5TSEBZ', 'pgla_01KBE8WV6QESATM17SHW189Q0H', 10)
+)
+select
+    t.id,
+    fa.name as from_account_name,
+    ta.name as to_account_name,
+    t.amount
+from transfer t
+join pgledger_accounts_view fa on t.from_account_id = fa.id
+join pgledger_accounts_view ta on t.to_account_id = ta.id;
+
+               id                | from_account_name |  to_account_name  | amount
+---------------------------------+-------------------+-------------------+--------
+ pglt_01KBEAFECDFNFBD8AP4TAYR0JJ | user1.external    | user1.receivables |     10
+(1 row)
+```
+
+Another example is creating transfers by account name, instead of by id:
+
+```sql
+select * from pgledger_create_transfer(
+    (select id from pgledger_accounts_view where name = 'user1.external'),
+    (select id from pgledger_accounts_view where name = 'user1.available'),
+    10
+);
+
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata
+---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
+ pglt_01KBEAMRZ3E75T92F61E3941J9 | pgla_01KBE8WV6PE2BSZHVKDD5TSEBZ | pgla_01KBE8WV6QFFA9HJVQQFSZWY69 |     10 | 2025-12-02 01:25:45.569722+00 | 2025-12-02 01:25:45.569722+00 | [NULL]
+(1 row)
+```
+
+And of course you can make functions for these if you prefer:
+
+```sql
+create or replace function pgledger_create_transfer_by_names(
+    from_account_name text,
+    to_account_name text,
+    amount numeric
+) returns setof pgledger_transfers_view
+as $$
+    select * from pgledger_create_transfer(
+        (select id from pgledger_accounts_view where name = from_account_name),
+        (select id from pgledger_accounts_view where name = to_account_name),
+        amount);
+$$ language sql;
+
+select * from pgledger_create_transfer_by_names('user1.external', 'user1.available', 50);
+
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata
+---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
+ pglt_01KBETH5T2EX0847VRPMAZJA0W | pgla_01KBET086CEM1RKFXA68GKP17V | pgla_01KBET086DFHGTDQPSP5V6DFXK |     50 | 2025-12-02 06:03:24.864397+00 | 2025-12-02 06:03:24.864397+00 | [NULL]
+(1 row)
+```
+
 ### Event Timestamp
 
 Transfers take an optional `event_at`, which should be used to record when the ledgerable event occurred if it is not now. For example, if you are recording ledger transfers in response to webhooks (such as money arriving in your bank account), then you can set the `event_at` to be the timestamp from the webhook.
