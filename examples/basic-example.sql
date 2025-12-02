@@ -15,12 +15,15 @@
 -- We're going to simulate a simple payment flow. First, we create our accounts:
 SELECT id FROM pgledger_create_account('user1.external', 'USD') \gset user1_external_
 SELECT id FROM pgledger_create_account('user1.receivables', 'USD') \gset user1_receivables_
-SELECT id FROM pgledger_create_account('user1.available', 'USD') \gset user1_available_
+
+-- Note that we may want to prevent some accounts from going negative or positive:
+SELECT id FROM pgledger_create_account('user1.available', 'USD', allow_negative_balance => FALSE) \gset user1_available_
+
 SELECT id FROM pgledger_create_account('user1.pending_outbound', 'USD') \gset user1_pending_outbound_
 
--- We can query an account to see what it looks like at the beginning.
+-- We can query accounts to see what they looks like at the beginning.
 SELECT * FROM pgledger_accounts_view
-WHERE id =:'user1_external_id';
+WHERE id IN (:'user1_external_id',:'user1_available_id');
 
 -- The first step in the flow is a $50 payment is created and we are waiting for funds to arrive:
 SELECT * FROM pgledger_create_transfer(:'user1_external_id',:'user1_receivables_id', 50.00);
@@ -81,3 +84,8 @@ WHERE id =:'user1_receivables_id';
 SELECT * FROM pgledger_entries_view
 WHERE account_id =:'user1_receivables_id'
 ORDER BY account_version;
+
+-- We can also see that the `allow_negative_balance => false` flag on our
+-- available account prevents transfers which are more than the current
+-- balance:
+SELECT * FROM pgledger_create_transfer(:'user1_available_id',:'user1_pending_outbound_id', 50.00);
