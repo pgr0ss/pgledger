@@ -68,33 +68,15 @@ func dbconn(t TestingT) *pgxpool.Pool {
 }
 
 func createAccount(t TestingT, conn *pgxpool.Pool, name string, currency string) *Account {
-	rows, err := conn.Query(t.Context(), "select * from pgledger_create_account($1, $2)", name, currency)
-	assert.NoError(t, err)
-
-	account, err := pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[Account])
-	assert.NoError(t, err)
-
-	return account
+	return queryOne[Account](t, conn, "select * from pgledger_create_account($1, $2)", name, currency)
 }
 
 func getAccount(t TestingT, conn *pgxpool.Pool, id string) *Account {
-	rows, err := conn.Query(t.Context(), "select * from pgledger_accounts_view where id = $1", id)
-	assert.NoError(t, err)
-
-	account, err := pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[Account])
-	assert.NoError(t, err)
-
-	return account
+	return queryOne[Account](t, conn, "select * from pgledger_accounts_view where id = $1", id)
 }
 
 func getTransfer(t TestingT, conn *pgxpool.Pool, id string) *Transfer {
-	rows, err := conn.Query(t.Context(), "select * from pgledger_transfers_view where id = $1", id)
-	assert.NoError(t, err)
-
-	transfer, err := pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[Transfer])
-	assert.NoError(t, err)
-
-	return transfer
+	return queryOne[Transfer](t, conn, "select * from pgledger_transfers_view where id = $1", id)
 }
 
 func createTransfer(t TestingT, conn *pgxpool.Pool, fromAccountID, toAccountID, amount string) *Transfer {
@@ -126,4 +108,14 @@ func getEntries(t TestingT, conn *pgxpool.Pool, accountID string) []Entry {
 	assert.NoError(t, err)
 
 	return entries
+}
+
+func queryOne[T any](t TestingT, conn *pgxpool.Pool, sql string, args ...any) *T {
+	rows, err := conn.Query(t.Context(), sql, args...)
+	assert.NoError(t, err)
+
+	account, err := pgx.CollectExactlyOneRow(rows, pgx.RowToAddrOfStructByName[T])
+	assert.NoError(t, err)
+
+	return account
 }
