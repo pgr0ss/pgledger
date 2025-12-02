@@ -1,0 +1,90 @@
+-- This file contains the sql queries plus their output, but we set the filetype to sql for better syntax highlighting
+-- vim: set filetype=sql:
+
+-- This is a fully working example script which shows a strategy for locking an
+-- account
+--
+-- Note that it uses `\gset` to store sql responses as variables. For example,
+-- `\gset foo_` creates variables for each column in the response like
+-- `foo_col1`, `foo_col2`, etc. These variables can then be used like
+-- `:'foo1_col`.
+-- The entire script can be passed to psql. If you are running postgres via the
+-- pgledger docker compose, you can run this script with:
+--
+--   cat lock-account.sql | \
+--     docker compose exec --no-TTY postgres psql -U pgledger --echo-queries --no-psqlrc
+--
+-- Create a couple of accounts for testing
+SELECT id FROM pgledger_create_account('account1', 'USD') \gset account1_
+SELECT id FROM pgledger_create_account('account2', 'USD') \gset account2_
+-- Create a transfer to set the balances to non-zero
+SELECT * FROM pgledger_create_transfer(:'account1_id',:'account2_id', 10.00);
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata 
+---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
+ pglt_01KBESP009FBRAP6176NPJN3MQ | pgla_01KBESP007EM4S3Q0MSVBK69N7 | pgla_01KBESP008EWA9ZVN38MYAN4KW |  10.00 | 2025-12-02 05:48:34.184697+00 | 2025-12-02 05:48:34.184697+00 | 
+(1 row)
+
+-- Now, update account2 to disallow both negative and positive balances, which
+-- means the balance must be zero. This is only checked on transfer, so it will
+-- work even if the current balance is not zero.
+UPDATE pgledger_accounts
+SET
+    allow_negative_balance = 'false',
+    allow_positive_balance = 'false'
+WHERE id =:'account2_id' RETURNING *;
+               id                |   name   | currency | balance | version | allow_negative_balance | allow_positive_balance | metadata |          created_at           |          updated_at           
+---------------------------------+----------+----------+---------+---------+------------------------+------------------------+----------+-------------------------------+-------------------------------
+ pgla_01KBESP008EWA9ZVN38MYAN4KW | account2 | USD      |   10.00 |       1 | f                      | f                      |          | 2025-12-02 05:48:34.184369+00 | 2025-12-02 05:48:34.184697+00
+(1 row)
+
+UPDATE 1
+-- This should fail now since it would take the balance from 10 to 20
+SELECT * FROM pgledger_create_transfer(:'account1_id',:'account2_id', 10.00);
+ERROR:  Account (id=pgla_01KBESP008EWA9ZVN38MYAN4KW, name=account2) does not allow positive balance
+CONTEXT:  PL/pgSQL function pgledger_check_account_balance_constraints(pgledger_accounts) line 10 at RAISE
+SQL statement "SELECT pgledger_check_account_balance_constraints(to_account)"
+PL/pgSQL function pgledger_create_transfers(transfer_request[],timestamp with time zone,jsonb) line 60 at PERFORM
+SQL statement "SELECT * FROM pgledger_create_transfers(
+        transfer_requests => array[(from_account_id, to_account_id, amount)::TRANSFER_REQUEST],
+        event_at => event_at,
+        metadata => metadata
+    )"
+PL/pgSQL function pgledger_create_transfer(text,text,numeric,timestamp with time zone,jsonb) line 4 at RETURN QUERY
+-- But this will work since it zeroes out the balance:
+SELECT * FROM pgledger_create_transfer(:'account2_id',:'account1_id', 10.00);
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata 
+---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
+ pglt_01KBESP00BEB1RBR4E18S3H3MZ | pgla_01KBESP008EWA9ZVN38MYAN4KW | pgla_01KBESP007EM4S3Q0MSVBK69N7 |  10.00 | 2025-12-02 05:48:34.187002+00 | 2025-12-02 05:48:34.187002+00 | 
+(1 row)
+
+-- But no other transfers to or from account2 will work now:
+SELECT * FROM pgledger_create_transfer(:'account2_id',:'account1_id', 10.00);
+ERROR:  Account (id=pgla_01KBESP008EWA9ZVN38MYAN4KW, name=account2) does not allow negative balance
+CONTEXT:  PL/pgSQL function pgledger_check_account_balance_constraints(pgledger_accounts) line 5 at RAISE
+SQL statement "SELECT pgledger_check_account_balance_constraints(from_account)"
+PL/pgSQL function pgledger_create_transfers(transfer_request[],timestamp with time zone,jsonb) line 50 at PERFORM
+SQL statement "SELECT * FROM pgledger_create_transfers(
+        transfer_requests => array[(from_account_id, to_account_id, amount)::TRANSFER_REQUEST],
+        event_at => event_at,
+        metadata => metadata
+    )"
+PL/pgSQL function pgledger_create_transfer(text,text,numeric,timestamp with time zone,jsonb) line 4 at RETURN QUERY
+-- Now, at query time, you can consider accounts in this state as 'inactive' or
+-- whatever status you like:
+SELECT
+    name,
+    allow_negative_balance,
+    allow_positive_balance,
+    CASE
+        WHEN allow_positive_balance = 'false' AND allow_negative_balance = 'false' THEN 'inactive'
+        ELSE 'active'
+    END AS status
+FROM pgledger_accounts_view
+WHERE id IN (:'account2_id',:'account1_id')
+ORDER BY id;
+   name   | allow_negative_balance | allow_positive_balance |  status  
+----------+------------------------+------------------------+----------
+ account1 | t                      | t                      | active
+ account2 | f                      | f                      | inactive
+(2 rows)
+
