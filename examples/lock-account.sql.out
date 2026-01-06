@@ -12,7 +12,7 @@
 -- pgledger docker compose, you can run this script with:
 --
 --   cat lock-account.sql | \
---     docker compose exec --no-TTY postgres psql -U pgledger --echo-queries --no-psqlrc
+--     docker compose exec --no-TTY postgres psql -U pgledger --echo-all --no-psqlrc
 --
 -- Create a couple of accounts for testing
 SELECT id FROM pgledger_create_account('account1', 'USD') \gset account1_
@@ -21,7 +21,7 @@ SELECT id FROM pgledger_create_account('account2', 'USD') \gset account2_
 SELECT * FROM pgledger_create_transfer(:'account1_id',:'account2_id', 10.00);
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata 
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
- pglt_01KBET086FEFFT33WE103GEC66 | pgla_01KBET086CEM1RKFXA68GKP17V | pgla_01KBET086DFHGTDQPSP5V6DFXK |  10.00 | 2025-12-02 05:54:10.254239+00 | 2025-12-02 05:54:10.254239+00 | 
+ pglt_01KEA9YZBQFSD9YNFKM351J86V | pgla_01KEA9YZBPE89VKD3A40HP2SNP | pgla_01KEA9YZBPFQQTF9AJWT5CQNNX |  10.00 | 2026-01-06 18:43:58.967095+00 | 2026-01-06 18:43:58.967095+00 | 
 (1 row)
 
 -- Now, update account2 to disallow both negative and positive balances, which
@@ -34,7 +34,7 @@ SET
 WHERE id =:'account2_id' RETURNING *;
                id                |   name   | currency | balance | version | allow_negative_balance | allow_positive_balance | metadata |          created_at           |          updated_at           
 ---------------------------------+----------+----------+---------+---------+------------------------+------------------------+----------+-------------------------------+-------------------------------
- pgla_01KBET086DFHGTDQPSP5V6DFXK | account2 | USD      |   10.00 |       1 | f                      | f                      |          | 2025-12-02 05:54:10.253656+00 | 2025-12-02 05:54:10.254239+00
+ pgla_01KEA9YZBPFQQTF9AJWT5CQNNX | account2 | USD      |   10.00 |       1 | f                      | f                      |          | 2026-01-06 18:43:58.966816+00 | 2026-01-06 18:43:58.967095+00
 (1 row)
 
 UPDATE 1
@@ -42,7 +42,7 @@ UPDATE 1
 SELECT * FROM pgledger_create_transfer(:'account1_id',:'account2_id', 10.00);
 -- But this will work since it zeroes out the balance:
 SELECT * FROM pgledger_create_transfer(:'account2_id',:'account1_id', 10.00);
-ERROR:  Account (id=pgla_01KBET086DFHGTDQPSP5V6DFXK, name=account2) does not allow positive balance
+ERROR:  Account (id=pgla_01KEA9YZBPFQQTF9AJWT5CQNNX, name=account2) does not allow positive balance
 CONTEXT:  PL/pgSQL function pgledger_check_account_balance_constraints(pgledger_accounts) line 10 at RAISE
 SQL statement "SELECT pgledger_check_account_balance_constraints(to_account)"
 PL/pgSQL function pgledger_create_transfers(transfer_request[],timestamp with time zone,jsonb) line 60 at PERFORM
@@ -52,14 +52,14 @@ SQL statement "SELECT * FROM pgledger_create_transfers(
         metadata => metadata
     )"
 PL/pgSQL function pgledger_create_transfer(text,text,numeric,timestamp with time zone,jsonb) line 4 at RETURN QUERY
-               id                |         from_account_id         |          to_account_id          | amount |          created_at          |           event_at           | metadata 
----------------------------------+---------------------------------+---------------------------------+--------+------------------------------+------------------------------+----------
- pglt_01KBET086GFFDB61PKZNZ62ZT5 | pgla_01KBET086DFHGTDQPSP5V6DFXK | pgla_01KBET086CEM1RKFXA68GKP17V |  10.00 | 2025-12-02 05:54:10.25653+00 | 2025-12-02 05:54:10.25653+00 | 
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata 
+---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
+ pglt_01KEA9YZBSEECA4HD8XG7ETA6M | pgla_01KEA9YZBPFQQTF9AJWT5CQNNX | pgla_01KEA9YZBPE89VKD3A40HP2SNP |  10.00 | 2026-01-06 18:43:58.969036+00 | 2026-01-06 18:43:58.969036+00 | 
 (1 row)
 
 -- But no other transfers to or from account2 will work now:
 SELECT * FROM pgledger_create_transfer(:'account2_id',:'account1_id', 10.00);
-ERROR:  Account (id=pgla_01KBET086DFHGTDQPSP5V6DFXK, name=account2) does not allow negative balance
+ERROR:  Account (id=pgla_01KEA9YZBPFQQTF9AJWT5CQNNX, name=account2) does not allow negative balance
 CONTEXT:  PL/pgSQL function pgledger_check_account_balance_constraints(pgledger_accounts) line 5 at RAISE
 SQL statement "SELECT pgledger_check_account_balance_constraints(from_account)"
 PL/pgSQL function pgledger_create_transfers(transfer_request[],timestamp with time zone,jsonb) line 50 at PERFORM
