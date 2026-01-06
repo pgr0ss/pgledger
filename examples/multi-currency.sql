@@ -10,7 +10,7 @@
 -- pgledger docker compose, you can run this script with:
 --
 --   cat multi-currency.sql | \
---     docker compose exec --no-TTY postgres psql -U pgledger --echo-queries --no-psqlrc
+--     docker compose exec --no-TTY postgres psql -U pgledger --echo-all --no-psqlrc
 --
 
 -- We're going to simulate a user holding balances in multiple currencies.

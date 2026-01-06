@@ -9,7 +9,7 @@
 -- pgledger docker compose, you can run this script with:
 --
 --   cat reconciliation.sql | \
---     docker compose exec --no-TTY postgres psql -U pgledger --echo-queries --no-psqlrc
+--     docker compose exec --no-TTY postgres psql -U pgledger --echo-all --no-psqlrc
 --
 
 -- The goal of this script is to show some reconcilation examples. Reconcilation is the process
