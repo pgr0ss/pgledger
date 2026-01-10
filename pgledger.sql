@@ -43,7 +43,7 @@ CREATE TABLE pgledger_accounts (
     id TEXT PRIMARY KEY DEFAULT pgledger_generate_id('pgla'),
     name TEXT NOT NULL,
     currency TEXT NOT NULL,
-    balance NUMERIC NOT NULL DEFAULT 0,
+    balance MONEY NOT NULL DEFAULT 0,
     version BIGINT NOT NULL DEFAULT 0,
     allow_negative_balance BOOLEAN NOT NULL,
     allow_positive_balance BOOLEAN NOT NULL,
@@ -56,7 +56,7 @@ CREATE TABLE pgledger_transfers (
     id TEXT PRIMARY KEY DEFAULT pgledger_generate_id('pglt'),
     from_account_id TEXT NOT NULL REFERENCES pgledger_accounts (id),
     to_account_id TEXT NOT NULL REFERENCES pgledger_accounts (id),
-    amount NUMERIC NOT NULL,
+    amount MONEY NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     event_at TIMESTAMPTZ NOT NULL,
     metadata JSONB,
@@ -72,8 +72,8 @@ CREATE TABLE pgledger_entries (
     account_id TEXT NOT NULL REFERENCES pgledger_accounts (id),
     transfer_id TEXT NOT NULL REFERENCES pgledger_transfers (id),
     amount NUMERIC NOT NULL,
-    account_previous_balance NUMERIC NOT NULL,
-    account_current_balance NUMERIC NOT NULL,
+    account_previous_balance MONEY NOT NULL,
+    account_current_balance MONEY NOT NULL,
     account_version BIGINT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL
 );
@@ -157,13 +157,13 @@ $$ LANGUAGE plpgsql;
 CREATE TYPE transfer_request AS (
     from_account_id TEXT,
     to_account_id TEXT,
-    amount NUMERIC
+    amount MONEY
 );
 
 CREATE OR REPLACE FUNCTION pgledger_create_transfer(
     from_account_id TEXT,
     to_account_id TEXT,
-    amount NUMERIC,
+    amount MONEY,
     event_at TIMESTAMPTZ DEFAULT NULL,
     metadata JSONB DEFAULT NULL
 )
