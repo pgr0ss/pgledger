@@ -8,7 +8,17 @@ For more information on the background and rationale for this project, check out
 - [A Ledger In PostgreSQL Is Fast!](https://pgrs.net/2025/05/16/pgledger-in-postgresql-is-fast/)
 - [Double-Entry Ledgers: The Missing Primitive in Modern Software](https://pgrs.net/2025/06/17/double-entry-ledgers-missing-primitive-in-modern-software/)
 
-The implementation is currently in a single file: [pgledger.sql](/pgledger.sql).
+## Installation
+
+The ledger implementation is currently in a single file: [pgledger.sql](/pgledger.sql). But it also relies on some helper ULID/UUID functions from [scoville/pgsql-ulid](https://github.com/scoville/pgsql-ulid) (see [#IDS](#ids) for more information). I vendored the helpers in this repository for simplicity and compatibility (in case the pgsql-ulid library changes).
+
+To install, run the following SQL files using whatever database migration tool or method you prefer:
+1. First run the SQL files from the vendored [scoville/pgsql-ulid](vendor/scoville-pgsql-ulid):
+    - [vendor/scoville-pgsql-ulid/ulid-to-uuid.sql](vendor/scoville-pgsql-ulid/ulid-to-uuid.sql)
+    - [vendor/scoville-pgsql-ulid/uuid-to-ulid.sql](vendor/scoville-pgsql-ulid/uuid-to-ulid.sql)
+3. Then, run [pgledger.sql](/pgledger.sql)
+
+You can see an example in the `justfile` using `docker` and `psql`: [justfile#L13-L20](https://github.com/pgr0ss/pgledger/blob/ee38f40a9b45ab24b5c0cc0c12cfb7150499a55a/justfile#L13-L20)
 
 ## Usage
 
