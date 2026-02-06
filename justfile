@@ -56,10 +56,10 @@ golangci-lint:
     cd go && golangci-lint run --verbose
 
 lint-sql:
-    uvx sqlfluff@3.5.0 lint --verbose
+    uvx sqlfluff@4.0.0 lint --verbose
 
 format-sql:
-    uvx sqlfluff@3.5.0 format
+    uvx sqlfluff@4.0.0 format
 
 check: dbreset clean tidy format-sql test lint
 

@@ -20,7 +20,7 @@ processes = -1
 # slightly more compact layout, without significant drawbacks in legibility.
 # They also enable a style much closer to some established style guides.
 # https://docs.sqlfluff.com/en/stable/configuration/layout.html#implicit-indents
-allow_implicit_indents = True
+implicit-indents = require
 
 # This says to do "FROM table alias" instead of "FROM table AS alias"
 [sqlfluff:rules:aliasing.table]
