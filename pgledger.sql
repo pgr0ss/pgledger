@@ -154,7 +154,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Define a composite type for transfer requests
-CREATE TYPE transfer_request AS (
+CREATE TYPE TRANSFER_REQUEST AS (
     from_account_id TEXT,
     to_account_id TEXT,
     amount NUMERIC
