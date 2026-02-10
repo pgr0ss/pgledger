@@ -2,7 +2,15 @@
 
 A [double entry ledger](https://en.wikipedia.org/wiki/Double-entry_bookkeeping) implementation in PostgreSQL.
 
-For more information on the background and rationale for this project, check out these blog posts:
+## Why pgledger
+
+Ledgers are a fundamental building block of any software that deals with money. It’s incredibly important to know what money is where, how it got there, and what it’s for. Yet most companies build their own internal ledger from scratch.
+
+`pgledger` is a reusable ledger implementation that works across projects and programming languages. There is no application-level code; the entire thing is implemented in PostgreSQL tables, functions, and views. The application just calls SQL functions and queries data via SQL views.
+
+Furthermore, since `pgledger` lives entirely in PostgreSQL, it allows transactional guarantees with the rest of the application. Do some work, write to the ledger, and it all commits or doesn't atomically.
+
+For more in-depth information and rationale, check out these blog posts:
 
 - [Ledger Implementation in PostgreSQL](https://pgrs.net/2025/03/24/pgledger-ledger-implementation-in-postgresql/)
 - [A Ledger In PostgreSQL Is Fast!](https://pgrs.net/2025/05/16/pgledger-in-postgresql-is-fast/)
