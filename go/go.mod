@@ -1,6 +1,6 @@
 module github.com/pgr0ss/pgledger
 
-go 1.26.0
+go 1.26.1
 
 require (
 	github.com/jackc/pgx/v5 v5.8.0
