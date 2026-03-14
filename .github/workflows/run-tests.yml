@@ -22,7 +22,7 @@ jobs:
 
       - uses: extractions/setup-just@v3
 
-      - uses: jdx/mise-action@v3
+      - uses: jdx/mise-action@v4
         with:
           log_level: info
 
