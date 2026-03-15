@@ -2,4 +2,4 @@
 go = "1.26.1"           # Matches the version in go.mod
 uv = "0.10.0"
 just = "1.46.0"
-golangci-lint = "2.10.1"
+golangci-lint = "2.11.2"
