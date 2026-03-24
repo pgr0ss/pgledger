@@ -30,6 +30,9 @@ tidy:
 test:
     cd go && go test -v ./...
 
+test-property:
+    cd go && go test -v -tags property -count=1 ./...
+
 benchmark:
     cd go/test && go test -bench=. -benchtime=10s
 
@@ -61,7 +64,7 @@ lint-sql:
 format-sql:
     uvx sqlfluff@4.0.0 format
 
-check: dbreset clean tidy format-sql test lint
+check: dbreset clean tidy format-sql test lint test-property
 
 run-examples: dbreset
     #!/usr/bin/env bash
