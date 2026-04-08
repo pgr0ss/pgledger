@@ -45,6 +45,13 @@ jobs:
         env:
           POSTGRES_VERSION: ${{ matrix.postgres_version }}
 
+      - name: Upload rapid failure reproductions
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: rapid-testdata-pg${{ matrix.postgres_version }}
+          path: go/test/testdata/rapid/
+
   all-tests-passed:
     if: ${{ always() }}
     needs: test
