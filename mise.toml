@@ -1,5 +1,5 @@
 [tools]
 go = "1.26.1"           # Matches the version in go.mod
-uv = "0.11.2"
+uv = "0.11.7"
 just = "1.48.1"
 golangci-lint = "2.11.4"
