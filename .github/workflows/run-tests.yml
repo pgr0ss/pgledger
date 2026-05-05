@@ -38,10 +38,10 @@ jobs:
           POSTGRES_VERSION: ${{ matrix.postgres_version }}
 
       - name: Print PostgreSQL version
-        run: just --timestamp dbversion
+        run: just --time --timestamp dbversion
 
       - name: Run tests and linters
-        run: just --timestamp check
+        run: just --time --timestamp check
         env:
           POSTGRES_VERSION: ${{ matrix.postgres_version }}
 
