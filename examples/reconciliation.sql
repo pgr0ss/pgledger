@@ -136,7 +136,7 @@ ORDER BY 1
 \crosstabview transfer name amount
 
 -- We can even get fancier and sum the entries for each account in the table:
-WITH entries AS ( -- noqa: PRS, the \crosstabview above breaks parsing, so we have to ignore sqlfluff from here
+WITH entries AS (
     SELECT
         concat_ws(' - ', e.transfer_id, e.metadata ->> 'kind') AS transfer,
         a.name,

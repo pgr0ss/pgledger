@@ -3,4 +3,4 @@ go = "1.26.2"                  # Matches the version in go.mod
 uv = "0.11.2"
 "github:casey/just" = "1.50.0"
 golangci-lint = "2.11.4"
-"pipx:sqlfluff" = "4.1.0"
+"pipx:sqlfluff" = "4.2.1"
