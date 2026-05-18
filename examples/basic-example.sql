@@ -23,28 +23,28 @@ SELECT id FROM pgledger_create_account('user1.pending_outbound', 'USD') \gset us
 
 -- We can query accounts to see what they looks like at the beginning.
 SELECT * FROM pgledger_accounts_view
-WHERE id IN (:'user1_external_id',:'user1_available_id');
+WHERE id IN (:'user1_external_id', :'user1_available_id');
 
 -- The first step in the flow is a $50 payment is created and we are waiting for funds to arrive:
-SELECT * FROM pgledger_create_transfer(:'user1_external_id',:'user1_receivables_id', 50.00);
+SELECT * FROM pgledger_create_transfer(:'user1_external_id', :'user1_receivables_id', 50.00);
 
 -- Next, the funds arrive in our account, so we remove them from receivables and make them available:
-SELECT * FROM pgledger_create_transfer(:'user1_receivables_id',:'user1_available_id', 50.00);
+SELECT * FROM pgledger_create_transfer(:'user1_receivables_id', :'user1_available_id', 50.00);
 
 -- Now, we can query the accounts and see the balances. We aren't waiting on
 -- any more funds, so the receivables balance is 0:
 SELECT balance FROM pgledger_accounts_view
-WHERE id =:'user1_receivables_id';
+WHERE id = :'user1_receivables_id';
 
 -- And we can see the entries for the receivables account:
 SELECT * FROM pgledger_entries_view
-WHERE account_id =:'user1_receivables_id'
+WHERE account_id = :'user1_receivables_id'
 ORDER BY account_version;
 
 -- Continuing the example, let's issue a partial refund of the payment. When we
 -- issue the refund, we move the money into the pending_outbound account to
 -- hold it until we get confirmation that it was sent
-SELECT * FROM pgledger_create_transfer(:'user1_available_id',:'user1_pending_outbound_id', 20.00);
+SELECT * FROM pgledger_create_transfer(:'user1_available_id', :'user1_pending_outbound_id', 20.00);
 
 -- Once we get confirmation that that refund was sent, We can move the money
 -- back to the user's external account (e.g. their credit/debit card). Often,
@@ -69,23 +69,23 @@ SELECT
     name,
     balance
 FROM pgledger_accounts_view
-WHERE id IN (:'user1_external_id',:'user1_receivables_id',:'user1_available_id',:'user1_pending_outbound_id');
+WHERE id IN (:'user1_external_id', :'user1_receivables_id', :'user1_available_id', :'user1_pending_outbound_id');
 
 -- Next, we can simulate an unexpected case. Let's say we initiate a payment
 -- for $10 but we only receive $8 (e.g. due to unexpected fees):
-SELECT * FROM pgledger_create_transfer(:'user1_external_id',:'user1_receivables_id', 10.00);
-SELECT * FROM pgledger_create_transfer(:'user1_receivables_id',:'user1_available_id', 8.00);
+SELECT * FROM pgledger_create_transfer(:'user1_external_id', :'user1_receivables_id', 10.00);
+SELECT * FROM pgledger_create_transfer(:'user1_receivables_id', :'user1_available_id', 8.00);
 
 -- Now, we can see that our receivables balance is not $0 like we expect:
 SELECT balance FROM pgledger_accounts_view
-WHERE id =:'user1_receivables_id';
+WHERE id = :'user1_receivables_id';
 
 -- And we can look at the entries to figure out what happened:
 SELECT * FROM pgledger_entries_view
-WHERE account_id =:'user1_receivables_id'
+WHERE account_id = :'user1_receivables_id'
 ORDER BY account_version;
 
 -- We can also see that the `allow_negative_balance => false` flag on our
 -- available account prevents transfers which are more than the current
 -- balance:
-SELECT * FROM pgledger_create_transfer(:'user1_available_id',:'user1_pending_outbound_id', 50.00);
+SELECT * FROM pgledger_create_transfer(:'user1_available_id', :'user1_pending_outbound_id', 50.00);
