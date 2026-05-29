@@ -207,6 +207,8 @@ Now, to transfer between the user's USD and EUR accounts, you create 2 simultane
 select * from pgledger_create_transfers(($user1_usd, $liquidity_usd, '10.00'), ($liquidity_eur, $user1_eur, '9.26'));
 ```
 
+For a more detailed exmaple, see: [examples/multi-currency.sql.out](examples/multi-currency.sql.out)
+
 ### IDs
 
 IDs for all tables are represented as prefixed [ULIDs](https://github.com/ulid/spec), such as `pgla_01JTVST7XAES5BXHWZN4KR4VEZ` for a ledger account and `pglt_01JTVR1WKXEKCRG7N6YD7XCZA6` for a ledger transfer.
