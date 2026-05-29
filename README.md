@@ -207,7 +207,7 @@ Now, to transfer between the user's USD and EUR accounts, you create 2 simultane
 select * from pgledger_create_transfers(($user1_usd, $liquidity_usd, '10.00'), ($liquidity_eur, $user1_eur, '9.26'));
 ```
 
-For a more detailed exmaple, see: [examples/multi-currency.sql.out](examples/multi-currency.sql.out)
+For a more detailed example, see: [examples/multi-currency.sql.out](examples/multi-currency.sql.out)
 
 ### IDs
 
