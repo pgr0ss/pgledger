@@ -147,14 +147,18 @@ WITH entries AS (
 )
 
 SELECT * FROM (
-    SELECT * FROM entries
+    SELECT
+        transfer,
+        name,
+        amount
+    FROM entries
     UNION
     SELECT
         '--- SUMS ---' AS transfer,
         name,
-        sum(amount)
+        sum(amount) AS amount
     FROM entries
     GROUP BY 1, 2
-)
+) entries_with_sums
 ORDER BY transfer
 \crosstabview transfer name amount
