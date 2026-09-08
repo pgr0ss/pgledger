@@ -9,12 +9,14 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/pgr0ss/pgledger/ledgertest"
 )
 
 func TestAddAccount(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
-	account := createAccount(t, conn, "account 1", "USD")
+	account := ledgertest.CreateAccount(t, conn, "account 1", "USD")
 
 	assert.Regexp(t, "^pgla_\\w+$", account.ID)
 	assert.Equal(t, "account 1", account.Name)
@@ -26,48 +28,48 @@ func TestAddAccount(t *testing.T) {
 }
 
 func TestAccountsThatCannotBeNegative(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
-	account1 := queryOne[Account](t, conn, "select * from pgledger_create_account('positive-only', 'USD', allow_negative_balance => false)")
-	account2 := queryOne[Account](t, conn, "select * from pgledger_create_account('account 2', 'USD')")
+	account1 := ledgertest.QueryOne[ledgertest.Account](t, conn, "select * from pgledger_create_account('positive-only', 'USD', allow_negative_balance => false)")
+	account2 := ledgertest.QueryOne[ledgertest.Account](t, conn, "select * from pgledger_create_account('account 2', 'USD')")
 
-	_, err := createTransferReturnErr(t.Context(), conn, account1.ID, account2.ID, "12.34")
+	_, err := ledgertest.CreateTransferReturnErr(t.Context(), conn, account1.ID, account2.ID, "12.34")
 	assert.ErrorContains(t, err, fmt.Sprintf("Account (id=%s, name=%s) does not allow negative balance", account1.ID, "positive-only"))
 
-	foundAccount1 := getAccount(t, conn, account1.ID)
-	foundAccount2 := getAccount(t, conn, account2.ID)
+	foundAccount1 := ledgertest.GetAccount(t, conn, account1.ID)
+	foundAccount2 := ledgertest.GetAccount(t, conn, account2.ID)
 
 	assert.Equal(t, "0", foundAccount1.Balance)
 	assert.Equal(t, "0", foundAccount2.Balance)
 }
 
 func TestAccountsThatCannotBePositive(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
-	account1 := queryOne[Account](t, conn, `SELECT * FROM pgledger_create_account('negative-only', 'USD', allow_positive_balance => false)`)
-	account2 := queryOne[Account](t, conn, `SELECT * FROM pgledger_create_account('account 2', 'USD')`)
+	account1 := ledgertest.QueryOne[ledgertest.Account](t, conn, `SELECT * FROM pgledger_create_account('negative-only', 'USD', allow_positive_balance => false)`)
+	account2 := ledgertest.QueryOne[ledgertest.Account](t, conn, `SELECT * FROM pgledger_create_account('account 2', 'USD')`)
 
-	_, err := createTransferReturnErr(t.Context(), conn, account2.ID, account1.ID, "12.34")
+	_, err := ledgertest.CreateTransferReturnErr(t.Context(), conn, account2.ID, account1.ID, "12.34")
 	assert.ErrorContains(t, err, fmt.Sprintf("Account (id=%s, name=%s) does not allow positive balance", account1.ID, "negative-only"))
 
-	foundAccount1 := getAccount(t, conn, account1.ID)
-	foundAccount2 := getAccount(t, conn, account2.ID)
+	foundAccount1 := ledgertest.GetAccount(t, conn, account1.ID)
+	foundAccount2 := ledgertest.GetAccount(t, conn, account2.ID)
 
 	assert.Equal(t, "0", foundAccount1.Balance)
 	assert.Equal(t, "0", foundAccount2.Balance)
 }
 
 func TestAccountMetadata(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
 	// No metadata
-	account1 := queryOne[Account](t, conn, "select * from pgledger_create_account($1, $2)", "no-metadata", "USD")
+	account1 := ledgertest.QueryOne[ledgertest.Account](t, conn, "select * from pgledger_create_account($1, $2)", "no-metadata", "USD")
 
 	// With regular parameter
-	account2 := queryOne[Account](t, conn, "select * from pgledger_create_account($1, $2, $3, $4, $5)", "no-metadata", "USD", true, true, `{"a": "b"}`)
+	account2 := ledgertest.QueryOne[ledgertest.Account](t, conn, "select * from pgledger_create_account($1, $2, $3, $4, $5)", "no-metadata", "USD", true, true, `{"a": "b"}`)
 
 	// With named parameter
-	account3 := queryOne[Account](t, conn, "select * from pgledger_create_account($1, $2, metadata => $3)", "no-metadata", "USD", `{"c": "d"}`)
+	account3 := ledgertest.QueryOne[ledgertest.Account](t, conn, "select * from pgledger_create_account($1, $2, metadata => $3)", "no-metadata", "USD", `{"c": "d"}`)
 
 	assert.Nil(t, account1.Metadata)
 	assert.Equal(t, `{"a": "b"}`, *account2.Metadata)
@@ -75,12 +77,12 @@ func TestAccountMetadata(t *testing.T) {
 }
 
 func TestCreateTransfer(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
-	account1 := createAccount(t, conn, "account 1", "USD")
-	account2 := createAccount(t, conn, "account 2", "USD")
+	account1 := ledgertest.CreateAccount(t, conn, "account 1", "USD")
+	account2 := ledgertest.CreateAccount(t, conn, "account 2", "USD")
 
-	transfer := createTransfer(t, conn, account1.ID, account2.ID, "12.34")
+	transfer := ledgertest.CreateTransfer(t, conn, account1.ID, account2.ID, "12.34")
 
 	assert.Regexp(t, "^pglt_\\w+$", transfer.ID)
 	assert.Equal(t, account1.ID, transfer.FromAccountID)
@@ -88,15 +90,15 @@ func TestCreateTransfer(t *testing.T) {
 	assert.Equal(t, "12.34", transfer.Amount)
 	assert.WithinDuration(t, time.Now(), transfer.CreatedAt, time.Minute)
 
-	foundTransfer := getTransfer(t, conn, transfer.ID)
+	foundTransfer := ledgertest.GetTransfer(t, conn, transfer.ID)
 	assert.Regexp(t, transfer.ID, foundTransfer.ID)
 	assert.Equal(t, account1.ID, foundTransfer.FromAccountID)
 	assert.Equal(t, account2.ID, foundTransfer.ToAccountID)
 	assert.Equal(t, "12.34", foundTransfer.Amount)
 	assert.WithinDuration(t, time.Now(), foundTransfer.CreatedAt, time.Minute)
 
-	foundAccount1 := getAccount(t, conn, account1.ID)
-	foundAccount2 := getAccount(t, conn, account2.ID)
+	foundAccount1 := ledgertest.GetAccount(t, conn, account1.ID)
+	foundAccount2 := ledgertest.GetAccount(t, conn, account2.ID)
 
 	assert.Equal(t, "-12.34", foundAccount1.Balance)
 	assert.Equal(t, "12.34", foundAccount2.Balance)
@@ -107,10 +109,10 @@ func TestCreateTransfer(t *testing.T) {
 }
 
 func TestCreateTransferWithAndWithoutEventAt(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
-	account1 := createAccount(t, conn, "account 1", "USD")
-	account2 := createAccount(t, conn, "account 2", "USD")
+	account1 := ledgertest.CreateAccount(t, conn, "account 1", "USD")
+	account2 := ledgertest.CreateAccount(t, conn, "account 2", "USD")
 
 	eventAt, err := time.Parse(time.RFC3339, "2025-07-01T12:34:56Z")
 	assert.NoError(t, err)
@@ -127,7 +129,7 @@ func TestCreateTransferWithAndWithoutEventAt(t *testing.T) {
 	rows, err := conn.Query(t.Context(), "select * from pgledger_transfers where from_account_id = $1", account1.ID)
 	assert.NoError(t, err)
 
-	transfers, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[Transfer])
+	transfers, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[ledgertest.Transfer])
 	assert.NoError(t, err)
 
 	assert.Len(t, transfers, 3)
@@ -141,7 +143,7 @@ func TestCreateTransferWithAndWithoutEventAt(t *testing.T) {
 	assert.Equal(t, eventAt, transfers[2].EventAt.UTC())
 
 	// Entries view also has EventAt field
-	entries := getEntries(t, conn, account1.ID)
+	entries := ledgertest.GetEntries(t, conn, account1.ID)
 	assert.NoError(t, err)
 	assert.Len(t, entries, 3)
 
@@ -151,10 +153,10 @@ func TestCreateTransferWithAndWithoutEventAt(t *testing.T) {
 }
 
 func TestCreateTransfersWithAndWithoutEventAt(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
-	account1 := createAccount(t, conn, "account 1", "USD")
-	account2 := createAccount(t, conn, "account 2", "USD")
+	account1 := ledgertest.CreateAccount(t, conn, "account 1", "USD")
+	account2 := ledgertest.CreateAccount(t, conn, "account 2", "USD")
 
 	eventAt, err := time.Parse(time.RFC3339, "2025-07-01T12:34:56Z")
 	assert.NoError(t, err)
@@ -181,7 +183,7 @@ func TestCreateTransfersWithAndWithoutEventAt(t *testing.T) {
 	rows, err := conn.Query(t.Context(), "select * from pgledger_transfers where from_account_id = $1", account1.ID)
 	assert.NoError(t, err)
 
-	transfers, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[Transfer])
+	transfers, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[ledgertest.Transfer])
 	assert.NoError(t, err)
 
 	assert.Len(t, transfers, 6)
@@ -202,10 +204,10 @@ func TestCreateTransfersWithAndWithoutEventAt(t *testing.T) {
 }
 
 func TestCreateTransferWithAndWithoutMetadata(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
-	account1 := createAccount(t, conn, "account 1", "USD")
-	account2 := createAccount(t, conn, "account 2", "USD")
+	account1 := ledgertest.CreateAccount(t, conn, "account 1", "USD")
+	account2 := ledgertest.CreateAccount(t, conn, "account 2", "USD")
 
 	_, err := conn.Exec(t.Context(), "select pgledger_create_transfer($1, $2, 10)", account1.ID, account2.ID)
 	assert.NoError(t, err)
@@ -219,7 +221,7 @@ func TestCreateTransferWithAndWithoutMetadata(t *testing.T) {
 	rows, err := conn.Query(t.Context(), "select * from pgledger_transfers where from_account_id = $1", account1.ID)
 	assert.NoError(t, err)
 
-	transfers, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[Transfer])
+	transfers, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[ledgertest.Transfer])
 	assert.NoError(t, err)
 
 	assert.Len(t, transfers, 3)
@@ -229,7 +231,7 @@ func TestCreateTransferWithAndWithoutMetadata(t *testing.T) {
 	assert.Equal(t, `{"c": "d"}`, *transfers[2].Metadata)
 
 	// Entries view also has Metadata field
-	entries := getEntries(t, conn, account1.ID)
+	entries := ledgertest.GetEntries(t, conn, account1.ID)
 	assert.NoError(t, err)
 	assert.Len(t, entries, 3)
 
@@ -239,10 +241,10 @@ func TestCreateTransferWithAndWithoutMetadata(t *testing.T) {
 }
 
 func TestCreateTransfersWithAndWithoutMetadata(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
-	account1 := createAccount(t, conn, "account 1", "USD")
-	account2 := createAccount(t, conn, "account 2", "USD")
+	account1 := ledgertest.CreateAccount(t, conn, "account 1", "USD")
+	account2 := ledgertest.CreateAccount(t, conn, "account 2", "USD")
 
 	_, err := conn.Exec(t.Context(), "select pgledger_create_transfers(($1, $2, 10))", account1.ID, account2.ID)
 	assert.NoError(t, err)
@@ -266,7 +268,7 @@ func TestCreateTransfersWithAndWithoutMetadata(t *testing.T) {
 	rows, err := conn.Query(t.Context(), "select * from pgledger_transfers where from_account_id = $1", account1.ID)
 	assert.NoError(t, err)
 
-	transfers, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[Transfer])
+	transfers, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[ledgertest.Transfer])
 	assert.NoError(t, err)
 
 	assert.Len(t, transfers, 6)
@@ -280,11 +282,11 @@ func TestCreateTransfersWithAndWithoutMetadata(t *testing.T) {
 }
 
 func TestCreateMultipleTransfers(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
-	account1 := createAccount(t, conn, "account 1", "USD")
-	account2 := createAccount(t, conn, "account 2", "USD")
-	account3 := createAccount(t, conn, "account 3", "USD")
+	account1 := ledgertest.CreateAccount(t, conn, "account 1", "USD")
+	account2 := ledgertest.CreateAccount(t, conn, "account 2", "USD")
+	account3 := ledgertest.CreateAccount(t, conn, "account 3", "USD")
 
 	_, err := conn.Exec(t.Context(), `
 		select * from pgledger_create_transfers(
@@ -294,9 +296,9 @@ func TestCreateMultipleTransfers(t *testing.T) {
 		account1.ID, account2.ID, account3.ID)
 	assert.NoError(t, err)
 
-	foundAccount1 := getAccount(t, conn, account1.ID)
-	foundAccount2 := getAccount(t, conn, account2.ID)
-	foundAccount3 := getAccount(t, conn, account3.ID)
+	foundAccount1 := ledgertest.GetAccount(t, conn, account1.ID)
+	foundAccount2 := ledgertest.GetAccount(t, conn, account2.ID)
+	foundAccount3 := ledgertest.GetAccount(t, conn, account3.ID)
 
 	assert.Equal(t, "40", foundAccount1.Balance)
 	assert.Equal(t, "-10", foundAccount2.Balance)
@@ -308,12 +310,12 @@ func TestCreateMultipleTransfers(t *testing.T) {
 }
 
 func TestMultipleTransfersRollsBackIfOneIsBad(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
-	account1 := createAccount(t, conn, "account 1", "USD")
-	account2 := createAccount(t, conn, "account 2", "USD")
+	account1 := ledgertest.CreateAccount(t, conn, "account 1", "USD")
+	account2 := ledgertest.CreateAccount(t, conn, "account 2", "USD")
 
-	account3 := queryOne[Account](t, conn, "select * from pgledger_create_account('negative-only', 'USD', allow_positive_balance => false)")
+	account3 := ledgertest.QueryOne[ledgertest.Account](t, conn, "select * from pgledger_create_account('negative-only', 'USD', allow_positive_balance => false)")
 
 	_, err := conn.Exec(t.Context(), `
 		select * from pgledger_create_transfers(
@@ -323,9 +325,9 @@ func TestMultipleTransfersRollsBackIfOneIsBad(t *testing.T) {
 		account1.ID, account2.ID, account3.ID)
 	assert.ErrorContains(t, err, fmt.Sprintf("Account (id=%s, name=%s) does not allow positive balance", account3.ID, "negative-only"))
 
-	foundAccount1 := getAccount(t, conn, account1.ID)
-	foundAccount2 := getAccount(t, conn, account2.ID)
-	foundAccount3 := getAccount(t, conn, account3.ID)
+	foundAccount1 := ledgertest.GetAccount(t, conn, account1.ID)
+	foundAccount2 := ledgertest.GetAccount(t, conn, account2.ID)
+	foundAccount3 := ledgertest.GetAccount(t, conn, account3.ID)
 
 	assert.Equal(t, "0", foundAccount1.Balance)
 	assert.Equal(t, "0", foundAccount2.Balance)
@@ -337,10 +339,10 @@ func TestMultipleTransfersRollsBackIfOneIsBad(t *testing.T) {
 }
 
 func TestTransfersRollbackIfTransctionRollback(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
-	account1 := createAccount(t, conn, "account 1", "USD")
-	account2 := createAccount(t, conn, "account 2", "USD")
+	account1 := ledgertest.CreateAccount(t, conn, "account 1", "USD")
+	account2 := ledgertest.CreateAccount(t, conn, "account 2", "USD")
 
 	tx, err := conn.Begin(t.Context())
 	assert.NoError(t, err)
@@ -354,16 +356,16 @@ func TestTransfersRollbackIfTransctionRollback(t *testing.T) {
 	err = tx.Commit(t.Context())
 	assert.ErrorContains(t, err, "rollback")
 
-	assert.Equal(t, "0", getAccount(t, conn, account1.ID).Balance)
-	assert.Equal(t, "0", getAccount(t, conn, account2.ID).Balance)
+	assert.Equal(t, "0", ledgertest.GetAccount(t, conn, account1.ID).Balance)
+	assert.Equal(t, "0", ledgertest.GetAccount(t, conn, account2.ID).Balance)
 }
 
 func TestCreateMultipleTransfersRollbackOnFailure(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
-	account1 := createAccount(t, conn, "account 1", "USD")
+	account1 := ledgertest.CreateAccount(t, conn, "account 1", "USD")
 
-	positiveOnlyAccount := queryOne[Account](t, conn, "select * from pgledger_create_account('positive-only', 'USD', allow_negative_balance => false)")
+	positiveOnlyAccount := ledgertest.QueryOne[ledgertest.Account](t, conn, "select * from pgledger_create_account('positive-only', 'USD', allow_negative_balance => false)")
 
 	_, err := conn.Exec(t.Context(), fmt.Sprintf(`
 		BEGIN;
@@ -374,8 +376,8 @@ func TestCreateMultipleTransfersRollbackOnFailure(t *testing.T) {
 		`, account1.ID, positiveOnlyAccount.ID))
 	assert.ErrorContains(t, err, "does not allow negative balance")
 
-	foundAccount1 := getAccount(t, conn, account1.ID)
-	foundAccount2 := getAccount(t, conn, positiveOnlyAccount.ID)
+	foundAccount1 := ledgertest.GetAccount(t, conn, account1.ID)
+	foundAccount2 := ledgertest.GetAccount(t, conn, positiveOnlyAccount.ID)
 
 	assert.Equal(t, "0", foundAccount1.Balance)
 	assert.Equal(t, "0", foundAccount2.Balance)
@@ -385,28 +387,28 @@ func TestCreateMultipleTransfersRollbackOnFailure(t *testing.T) {
 }
 
 func TestTransferWithInvalidAccountID(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
-	account1 := createAccount(t, conn, "account 1", "USD")
+	account1 := ledgertest.CreateAccount(t, conn, "account 1", "USD")
 
-	_, err := createTransferReturnErr(t.Context(), conn, account1.ID, "bad_id", "12.34")
+	_, err := ledgertest.CreateTransferReturnErr(t.Context(), conn, account1.ID, "bad_id", "12.34")
 	assert.ErrorContains(t, err, "violates foreign key constraint")
 
-	_, err = createTransferReturnErr(t.Context(), conn, "bad_id", account1.ID, "12.34")
+	_, err = ledgertest.CreateTransferReturnErr(t.Context(), conn, "bad_id", account1.ID, "12.34")
 	assert.ErrorContains(t, err, "violates foreign key constraint")
 }
 
 func TestEntries(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
-	account1 := createAccount(t, conn, "account 1", "USD")
-	account2 := createAccount(t, conn, "account 2", "USD")
+	account1 := ledgertest.CreateAccount(t, conn, "account 1", "USD")
+	account2 := ledgertest.CreateAccount(t, conn, "account 2", "USD")
 
-	t1 := createTransfer(t, conn, account1.ID, account2.ID, "5")
-	t2 := createTransfer(t, conn, account1.ID, account2.ID, "10")
-	t3 := createTransfer(t, conn, account2.ID, account1.ID, "20")
+	t1 := ledgertest.CreateTransfer(t, conn, account1.ID, account2.ID, "5")
+	t2 := ledgertest.CreateTransfer(t, conn, account1.ID, account2.ID, "10")
+	t3 := ledgertest.CreateTransfer(t, conn, account2.ID, account1.ID, "20")
 
-	entries := getEntries(t, conn, account1.ID)
+	entries := ledgertest.GetEntries(t, conn, account1.ID)
 
 	assert.Len(t, entries, 3)
 
@@ -437,7 +439,7 @@ func TestEntries(t *testing.T) {
 	assert.WithinDuration(t, time.Now(), entries[2].CreatedAt, time.Minute)
 	assert.Equal(t, entries[2].CreatedAt, entries[2].EventAt)
 
-	entries = getEntries(t, conn, account2.ID)
+	entries = ledgertest.GetEntries(t, conn, account2.ID)
 
 	assert.Len(t, entries, 3)
 
@@ -470,46 +472,46 @@ func TestEntries(t *testing.T) {
 }
 
 func TestTransferAmountsArePositive(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
-	account1 := createAccount(t, conn, "account 1", "USD")
-	account2 := createAccount(t, conn, "account 2", "USD")
+	account1 := ledgertest.CreateAccount(t, conn, "account 1", "USD")
+	account2 := ledgertest.CreateAccount(t, conn, "account 2", "USD")
 
-	_, err := createTransferReturnErr(t.Context(), conn, account1.ID, account2.ID, "0")
+	_, err := ledgertest.CreateTransferReturnErr(t.Context(), conn, account1.ID, account2.ID, "0")
 	assert.ErrorContains(t, err, "Amount (0) must be positive")
 
-	_, err = createTransferReturnErr(t.Context(), conn, account1.ID, account2.ID, "-0.01")
+	_, err = ledgertest.CreateTransferReturnErr(t.Context(), conn, account1.ID, account2.ID, "-0.01")
 	assert.ErrorContains(t, err, "Amount (-0.01) must be positive")
 }
 
 func TestCannotTransferBetweenDifferentCurrencies(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
 	// Create two accounts with different currencies
-	accountUSD := createAccount(t, conn, "USD account", "USD")
-	accountEUR := createAccount(t, conn, "EUR account", "EUR")
+	accountUSD := ledgertest.CreateAccount(t, conn, "USD account", "USD")
+	accountEUR := ledgertest.CreateAccount(t, conn, "EUR account", "EUR")
 
-	_, err := createTransferReturnErr(t.Context(), conn, accountUSD.ID, accountEUR.ID, "10.00")
+	_, err := ledgertest.CreateTransferReturnErr(t.Context(), conn, accountUSD.ID, accountEUR.ID, "10.00")
 	assert.ErrorContains(t, err, "Cannot transfer between different currencies (USD and EUR)")
 
 	// Verify account balances remain unchanged
-	foundAccountUSD := getAccount(t, conn, accountUSD.ID)
-	foundAccountEUR := getAccount(t, conn, accountEUR.ID)
+	foundAccountUSD := ledgertest.GetAccount(t, conn, accountUSD.ID)
+	foundAccountEUR := ledgertest.GetAccount(t, conn, accountEUR.ID)
 
 	assert.Equal(t, "0", foundAccountUSD.Balance)
 	assert.Equal(t, "0", foundAccountEUR.Balance)
 }
 
 func TestTransferBetweenCurrenciesWithExtraAccounts(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
 	// Create two accounts with different currencies
-	userUSD := createAccount(t, conn, "user.USD", "USD")
-	userEUR := createAccount(t, conn, "user.EUR", "EUR")
+	userUSD := ledgertest.CreateAccount(t, conn, "user.USD", "USD")
+	userEUR := ledgertest.CreateAccount(t, conn, "user.EUR", "EUR")
 
 	// Liquidity accounts for the conversion
-	liquidityUSD := createAccount(t, conn, "liquidity.USD", "USD")
-	liquidityEUR := createAccount(t, conn, "liquidity.EUR", "EUR")
+	liquidityUSD := ledgertest.CreateAccount(t, conn, "liquidity.USD", "USD")
+	liquidityEUR := ledgertest.CreateAccount(t, conn, "liquidity.EUR", "EUR")
 
 	_, err := conn.Exec(t.Context(), fmt.Sprintf(`
 		BEGIN;
@@ -519,61 +521,61 @@ func TestTransferBetweenCurrenciesWithExtraAccounts(t *testing.T) {
 		`, userUSD.ID, liquidityUSD.ID, liquidityEUR.ID, userEUR.ID))
 	assert.NoError(t, err)
 
-	assert.Equal(t, "-10.00", getAccount(t, conn, userUSD.ID).Balance)
-	assert.Equal(t, "10.00", getAccount(t, conn, liquidityUSD.ID).Balance)
-	assert.Equal(t, "-9.26", getAccount(t, conn, liquidityEUR.ID).Balance)
-	assert.Equal(t, "9.26", getAccount(t, conn, userEUR.ID).Balance)
+	assert.Equal(t, "-10.00", ledgertest.GetAccount(t, conn, userUSD.ID).Balance)
+	assert.Equal(t, "10.00", ledgertest.GetAccount(t, conn, liquidityUSD.ID).Balance)
+	assert.Equal(t, "-9.26", ledgertest.GetAccount(t, conn, liquidityEUR.ID).Balance)
+	assert.Equal(t, "9.26", ledgertest.GetAccount(t, conn, userEUR.ID).Balance)
 }
 
 func TestTransfersUseDifferentAccounts(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
-	account1 := createAccount(t, conn, "account 1", "USD")
+	account1 := ledgertest.CreateAccount(t, conn, "account 1", "USD")
 
-	_, err := createTransferReturnErr(t.Context(), conn, account1.ID, account1.ID, "10")
+	_, err := ledgertest.CreateTransferReturnErr(t.Context(), conn, account1.ID, account1.ID, "10")
 	assert.ErrorContains(t, err, fmt.Sprintf("Cannot transfer to the same account (id=%s)", account1.ID))
 }
 
 func TestConcurrency(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
-	account1 := createAccount(t, conn, "account 1", "USD")
-	account2 := createAccount(t, conn, "account 2", "USD")
+	account1 := ledgertest.CreateAccount(t, conn, "account 1", "USD")
+	account2 := ledgertest.CreateAccount(t, conn, "account 2", "USD")
 
 	var wg sync.WaitGroup
 
 	wg.Go(func() {
 		for range 500 {
-			_ = createTransfer(t, conn, account1.ID, account2.ID, "100")
+			_ = ledgertest.CreateTransfer(t, conn, account1.ID, account2.ID, "100")
 		}
 	})
 
 	wg.Go(func() {
 		for range 500 {
-			_ = createTransfer(t, conn, account2.ID, account1.ID, "100")
+			_ = ledgertest.CreateTransfer(t, conn, account2.ID, account1.ID, "100")
 		}
 	})
 
 	// Wait for all goroutines to complete
 	wg.Wait()
 
-	foundAccount1 := getAccount(t, conn, account1.ID)
-	foundAccount2 := getAccount(t, conn, account2.ID)
+	foundAccount1 := ledgertest.GetAccount(t, conn, account1.ID)
+	foundAccount2 := ledgertest.GetAccount(t, conn, account2.ID)
 
 	assert.Equal(t, "0", foundAccount1.Balance)
 	assert.Equal(t, "0", foundAccount2.Balance)
 }
 
 func TestConcurrencyWithCurrencyExchange(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
 	// Create two accounts with different currencies
-	userUSD := createAccount(t, conn, "user.USD", "USD")
-	userEUR := createAccount(t, conn, "user.EUR", "EUR")
+	userUSD := ledgertest.CreateAccount(t, conn, "user.USD", "USD")
+	userEUR := ledgertest.CreateAccount(t, conn, "user.EUR", "EUR")
 
 	// Liquidity accounts for the conversion
-	liquidityUSD := createAccount(t, conn, "liquidity.USD", "USD")
-	liquidityEUR := createAccount(t, conn, "liquidity.EUR", "EUR")
+	liquidityUSD := ledgertest.CreateAccount(t, conn, "liquidity.USD", "USD")
+	liquidityEUR := ledgertest.CreateAccount(t, conn, "liquidity.EUR", "EUR")
 
 	var wg sync.WaitGroup
 
@@ -598,14 +600,14 @@ func TestConcurrencyWithCurrencyExchange(t *testing.T) {
 	// Wait for all goroutines to complete
 	wg.Wait()
 
-	assert.Equal(t, "0", getAccount(t, conn, userUSD.ID).Balance)
-	assert.Equal(t, "0", getAccount(t, conn, userEUR.ID).Balance)
-	assert.Equal(t, "0", getAccount(t, conn, liquidityUSD.ID).Balance)
-	assert.Equal(t, "0", getAccount(t, conn, liquidityEUR.ID).Balance)
+	assert.Equal(t, "0", ledgertest.GetAccount(t, conn, userUSD.ID).Balance)
+	assert.Equal(t, "0", ledgertest.GetAccount(t, conn, userEUR.ID).Balance)
+	assert.Equal(t, "0", ledgertest.GetAccount(t, conn, liquidityUSD.ID).Balance)
+	assert.Equal(t, "0", ledgertest.GetAccount(t, conn, liquidityEUR.ID).Balance)
 }
 
 func TestIdsAreMonotonic(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
 	// This query generates a series of ids, and then checks their sort order
 	// against the order in which they were generated
@@ -632,16 +634,16 @@ func TestIdsAreMonotonic(t *testing.T) {
 }
 
 func TestFindHistoricalBalanceAtGivenTime(t *testing.T) {
-	conn := setupTest(t)
+	conn := ledgertest.Setup(t)
 
-	account1 := createAccount(t, conn, "account 1", "USD")
-	account2 := createAccount(t, conn, "account 2", "USD")
+	account1 := ledgertest.CreateAccount(t, conn, "account 1", "USD")
+	account2 := ledgertest.CreateAccount(t, conn, "account 2", "USD")
 
-	_ = createTransfer(t, conn, account1.ID, account2.ID, "10")
-	_ = createTransfer(t, conn, account1.ID, account2.ID, "20")
-	_ = createTransfer(t, conn, account1.ID, account2.ID, "50")
+	_ = ledgertest.CreateTransfer(t, conn, account1.ID, account2.ID, "10")
+	_ = ledgertest.CreateTransfer(t, conn, account1.ID, account2.ID, "20")
+	_ = ledgertest.CreateTransfer(t, conn, account1.ID, account2.ID, "50")
 
-	entries := getEntries(t, conn, account2.ID)
+	entries := ledgertest.GetEntries(t, conn, account2.ID)
 	assert.Len(t, entries, 3)
 
 	// Normally, we would never update the ledger. But here I'm doing it to make testing easier.
@@ -653,7 +655,7 @@ func TestFindHistoricalBalanceAtGivenTime(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Current balance
-	assert.Equal(t, "80", getAccount(t, conn, account2.ID).Balance)
+	assert.Equal(t, "80", ledgertest.GetAccount(t, conn, account2.ID).Balance)
 
 	// Historical balances
 	assert.Equal(t, "10", accountBalanceAtTime(t, conn, account2.ID, "2025-06-01T12:00:00Z"))

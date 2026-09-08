@@ -32,6 +32,25 @@ tidy:
 test:
     cd go && go test -v ./...
 
+property-tests: dbreset
+    cd go && go test -v -tags property ./propertytest/
+
+# Runs the property suite as an unbounded workload until the duration elapses.
+# A clean cut-off by the timer is a pass; any other exit status is a failure.
+property-tests-continuous duration='60s': dbreset
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd go
+    bin=$(mktemp -d)/continuous
+    go build -tags property -o "$bin" ./propertytest/continuous
+    status=0
+    timeout {{ duration }} "$bin" --database propertytest/testdata/hegel || status=$?
+    if [[ $status -eq 124 ]]; then
+      echo "ran for {{ duration }} with no property failures"
+      exit 0
+    fi
+    exit $status
+
 benchmark:
     cd go/test && go test -bench=. -benchtime=10s
 
@@ -43,7 +62,7 @@ lint: deadcode lint-sql golangci-lint
 deadcode:
     #!/usr/bin/env bash
     set -euo pipefail
-    out=$(cd go && go tool deadcode -test ./...)
+    out=$(cd go && go tool deadcode -test -tags property ./...)
     echo "$out"
     if [[ $? != 0 ]]; then
       exit $?

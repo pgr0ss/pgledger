@@ -45,6 +45,12 @@ jobs:
         env:
           POSTGRES_VERSION: ${{ matrix.postgres_version }}
 
+      - name: Run property tests
+        run: just --time --timestamp property-tests
+        env:
+          POSTGRES_VERSION: ${{ matrix.postgres_version }}
+          PGLEDGER_HEGEL_CASES: 100
+
   all-tests-passed:
     if: ${{ always() }}
     needs: test

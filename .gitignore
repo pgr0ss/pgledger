@@ -1,2 +1,6 @@
 .claude/settings.local.json
 .env
+
+# Hegel's example database: shrunk counterexamples are replayed first on the
+# next run, but every run rewrites dozens of opaque blobs, so it is kept local.
+go/propertytest/testdata/hegel/

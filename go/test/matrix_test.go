@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/pgr0ss/pgledger/ledgertest"
 )
 
 func TestMatrixPostgresVersion(t *testing.T) {
@@ -16,7 +18,7 @@ func TestMatrixPostgresVersion(t *testing.T) {
 	}
 	assert.Regexp(t, `^\d+$`, expectedVersion)
 
-	conn := dbconn(t)
+	conn := ledgertest.Dbconn(t)
 
 	rows, err := conn.Query(t.Context(), "select version()")
 	assert.NoError(t, err)
