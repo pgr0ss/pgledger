@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgr0ss/pgledger/internal/dburl"
 )
 
 var (
@@ -47,7 +48,7 @@ func main() {
 	numAccounts, numWorkers, runDuration, vacuum := parseArgs()
 
 	ctx := context.Background()
-	dbconn := Must1(pgxpool.New(ctx, "postgres://pgledger:pgledger@localhost:5432/pgledger"))
+	dbconn := Must1(pgxpool.New(ctx, dburl.URL()))
 	defer dbconn.Close()
 
 	fmt.Printf("Creating %d accounts\n", numAccounts)

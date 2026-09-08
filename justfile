@@ -1,3 +1,5 @@
+set dotenv-load := true
+
 dbname := "pgledger"
 
 psql:

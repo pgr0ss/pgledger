@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgr0ss/pgledger/internal/dburl"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -60,7 +61,7 @@ func setupTest(t *testing.T) *pgxpool.Pool {
 }
 
 func dbconn(t TestingT) *pgxpool.Pool {
-	dbpool, err := pgxpool.New(context.Background(), "postgres://pgledger:pgledger@localhost:5432/pgledger")
+	dbpool, err := pgxpool.New(context.Background(), dburl.URL())
 	assert.NoError(t, err)
 
 	t.Cleanup(dbpool.Close)

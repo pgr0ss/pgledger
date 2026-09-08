@@ -296,6 +296,16 @@ Then you can run PostgreSQL in a docker container:
 docker compose up
 ```
 
+PostgreSQL listens on port 5432 by default. To run multiple checkouts (e.g.
+separate [git worktrees](https://git-scm.com/docs/git-worktree) or
+[jj workspaces](https://docs.jj-vcs.dev/latest/working-copy/#workspaces)) against their own databases, set
+`POSTGRES_PORT` in a `.env` file in the checkout, which both Docker Compose and
+the tests pick up:
+
+```bash
+echo POSTGRES_PORT=5433 > .env
+```
+
 And run the full set of tests and linters with:
 
 ```bash

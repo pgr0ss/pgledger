@@ -1,11 +1,10 @@
 services:
   postgres:
-    container_name: "pgledger_postgres"
     image: "postgres:${POSTGRES_VERSION:-18}"
     command: >
       -c max_wal_size=2GB
     ports:
-      - 5432:5432
+      - ${POSTGRES_PORT:-5432}:5432
     networks:
       - postgres-network
     environment:
