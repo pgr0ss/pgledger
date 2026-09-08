@@ -1,4 +1,4 @@
-set dotenv-load := true
+set dotenv-load
 
 dbname := "pgledger"
 
@@ -30,7 +30,14 @@ tidy:
     cd go && go mod tidy
 
 test:
-    cd go && go test -v ./...
+    cd go && go test -v ./test/
+
+# -count=1 disables Go's test cache
+property-tests:
+    cd go && go test -v -count=1 ./propertytest/
+
+property-tests-continuous duration='60s':
+    cd go && PGLEDGER_SOAK_DURATION={{ duration }} go run ./propertytest/continuous
 
 benchmark:
     cd go/test && go test -bench=. -benchtime=10s
