@@ -60,7 +60,7 @@ CREATE TABLE pgledger_transfers (
     created_at TIMESTAMPTZ NOT NULL,
     event_at TIMESTAMPTZ NOT NULL,
     metadata JSONB,
-    CHECK (amount > 0 AND from_account_id != to_account_id)
+    CHECK (amount > 0 AND amount < 'Infinity'::NUMERIC AND from_account_id != to_account_id)
 );
 
 CREATE INDEX ON pgledger_transfers (from_account_id);
@@ -228,8 +228,9 @@ BEGIN
     -- Process each transfer
     FOREACH transfer_request IN ARRAY transfer_requests LOOP
         -- Preliminary checks
-        IF transfer_request.amount <= 0 THEN
-            RAISE EXCEPTION 'Amount (%) must be positive', transfer_request.amount;
+        IF transfer_request.amount IS NULL
+            OR NOT (transfer_request.amount > 0 AND transfer_request.amount < 'Infinity'::NUMERIC) THEN
+            RAISE EXCEPTION 'Amount (%) must be a positive finite number', transfer_request.amount;
         END IF;
 
         IF transfer_request.from_account_id = transfer_request.to_account_id THEN

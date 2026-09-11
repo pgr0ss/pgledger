@@ -70,6 +70,44 @@ select created_at, account_version, amount, account_previous_balance, account_cu
 (2 rows)
 ```
 
+### Transfer Amounts
+
+A transfer amount must be a positive finite number. `0`, negative numbers, `NULL`, `NaN`, `Infinity`, and `-Infinity` are all rejected, and a rejected transfer changes nothing:
+
+```sql
+select * from pgledger_create_transfer($account_1_id, $account_2_id, 0);
+
+ERROR:  Amount (0) must be a positive finite number
+```
+
+The direction of the movement comes from the from/to accounts, not from the sign of the amount.
+
+### Batch Ordering
+
+`pgledger_create_transfers` applies its requests in array order, and each account's balance constraints are checked after each request rather than at the end of the batch. The order of requests within a batch is therefore significant: the same set of requests can succeed in one order and be rejected in another.
+
+For example, take an account `y` which does not allow a negative balance, plus accounts `x` and `z` which do (the default), all starting at a zero balance:
+
+```sql
+select id from pgledger_create_account('y', 'USD', allow_negative_balance => false); -- save this as y_id
+```
+
+Moving money into `y` before moving it out succeeds:
+
+```sql
+select * from pgledger_create_transfers(($x_id, $y_id, 10), ($y_id, $z_id, 10));
+```
+
+The same two requests in the opposite order are rejected, because `y` dips below zero after the first request:
+
+```sql
+select * from pgledger_create_transfers(($y_id, $z_id, 10), ($x_id, $y_id, 10));
+
+ERROR:  Account (id=pgla_01JTVST7XAES5BXHWZN4KR4VEZ, name=y) does not allow negative balance
+```
+
+A rejected call leaves the ledger unchanged, so none of the transfers or entries from the batch are recorded.
+
 ### Composability
 
 One of the nice things about SQL is that everything is composable. For example, the `pgledger_create_transfer` function only returns the fields from the `pgledger_transfers_view`:

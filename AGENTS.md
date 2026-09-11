@@ -52,13 +52,14 @@ pgledger_create_transfers(
 
 ## Key constraints and design decisions
 
-- Amounts must be positive; the direction is determined by from/to
+- Amounts must be positive finite numbers — `0`, negatives, `NULL`, `NaN`, `Infinity`, and `-Infinity` are rejected; direction comes from from/to
 - from_account_id must differ from to_account_id
 - Transfers between accounts with different currencies are rejected
 - Multi-currency exchange uses 4 accounts (2 user + 2 liquidity) and `pgledger_create_transfers`
 - Accounts lock in sorted ID order to prevent deadlocks
 - `event_at` records when the real-world event happened; `created_at` records when the ledger entry was written
 - Balance constraints are checked after each update — set both `allow_negative_balance=false` and `allow_positive_balance=false` to freeze an account
+- `pgledger_create_transfers` applies requests in array order and checks each account after every request, so batch order is significant — the same multiset can succeed in one order and fail in another
 - Account `version` increments on every transfer touching that account
 
 ## Implementation

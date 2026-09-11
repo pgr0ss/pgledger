@@ -42,9 +42,13 @@ property-tests-continuous duration='60s': dbreset
     set -euo pipefail
     cd go
     bin=$(mktemp -d)/continuous
-    go build -tags property -o "$bin" ./propertytest/continuous
+    go build -o "$bin" ./propertytest/continuous
     status=0
-    timeout {{ duration }} "$bin" --database propertytest/testdata/hegel || status=$?
+    # No flags: hegel already reports concurrent state machine failures without
+    # shrinking, replay or example-database persistence, so --database has
+    # nothing to persist, and --single-test-case would end the soak after one
+    # test case (~1s, exit 0) instead of running out the timer.
+    timeout {{ duration }} "$bin" || status=$?
     if [[ $status -eq 124 ]]; then
       echo "ran for {{ duration }} with no property failures"
       exit 0

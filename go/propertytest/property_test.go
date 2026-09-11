@@ -3,40 +3,87 @@
 package propertytest
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"math/big"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgr0ss/pgledger/ledgertest"
 	"hegel.dev/go/hegel"
 )
 
+// coverage counts how many test cases reached the situation a property is
+// about. Hegel reports nothing when a generator drifts into a corner where
+// every call is rejected and the assertions hold trivially, so each property
+// that can go vacuous states the fraction of cases it needs.
+type coverage struct {
+	cases   atomic.Int64
+	covered atomic.Int64
+}
+
+func (c *coverage) record(covered bool) {
+	c.cases.Add(1)
+	if covered {
+		c.covered.Add(1)
+	}
+}
+
+func (c *coverage) require(t *testing.T, what string, minFraction float64) {
+	t.Helper()
+
+	cases, covered := c.cases.Load(), c.covered.Load()
+	if cases == 0 {
+		t.Fatalf("no test cases ran, so nothing %s", what)
+	}
+	if fraction := float64(covered) / float64(cases); fraction < minFraction {
+		t.Fatalf("only %d of %d test cases %s (%.0f%%, want at least %.0f%%): the property is near-vacuous",
+			covered, cases, what, fraction*100, minFraction*100)
+	}
+}
+
 // TestLedgerInvariantsHoldForWellFormedBatches is the Tier A property: over a
-// random ledger and random accepted or rejected batches of well-formed
-// amounts, conservation, the entry fold, version counting and entry chain
+// random ledger and random batches of well-formed amounts, conservation, the
+// entry fold, version counting, per-transfer entry pairs and entry chain
 // continuity all hold, and an accepted batch returns its transfers in request
 // order.
+//
+// The accounts share a currency and permit any balance: with random currencies
+// and random constraint flags, almost every batch is rejected and the
+// invariants then hold over an empty ledger. Rejection paths belong to the
+// properties below that are about rejection.
 func TestLedgerInvariantsHoldForWellFormedBatches(t *testing.T) {
 	conn := ledgertest.Setup(t)
 	ctx := t.Context()
 
+	var landed coverage
 	hegel.Test(t, func(ht *hegel.T) {
-		specs := hegel.Draw(ht, hegel.Lists(accountSpecGen()).MinSize(2).MaxSize(6))
+		specs := hegel.Draw(ht, sameCurrencySpecsGen(2, 6, false))
 		s := newScope(ht, conn, ctx, specs)
 
+		accepted := 0
 		for _, batch := range hegel.Draw(ht, hegel.Lists(batchGen(len(specs), amountGen())).MinSize(1).MaxSize(4)) {
 			returned, err := s.createTransfers(batch, nil, nil)
 			if err != nil {
 				ht.Note("rejected " + describe(batch) + ": " + err.Error())
 				requirePgledgerError(ht, err)
 			} else {
+				accepted += len(returned)
 				assertReturnedMatchesRequests(ht, s, batch, returned)
 			}
 			s.assertInvariants(ht)
 		}
+
+		landed.record(accepted > 0)
+		ht.Target(float64(accepted), "accepted transfers")
 	}, hegel.WithTestCases(propertyCases()), hegel.WithDatabase("testdata/hegel"))
+
+	landed.require(t, "landed a transfer", 0.7)
 }
 
 // TestHostileAmountsNeverCorruptTheLedger is the Tier D property: whatever the
@@ -50,14 +97,19 @@ func TestHostileAmountsNeverCorruptTheLedger(t *testing.T) {
 	conn := ledgertest.Setup(t)
 	ctx := t.Context()
 
+	var accepted, rejected coverage
 	hegel.Test(t, func(ht *hegel.T) {
 		specs := hegel.Draw(ht, sameCurrencySpecsGen(2, 4, false))
 		s := newScope(ht, conn, ctx, specs)
 
-		batch := hegel.Draw(ht, batchGen(len(specs), hostileAmountGen()))
+		// One or two requests, not a long batch: every extra well-formed
+		// request only lowers the odds that the hostile one is reached.
+		batch := hegel.Draw(ht, hegel.Lists(requestGen(len(specs), hostileAmountGen())).MinSize(1).MaxSize(2))
 		before := s.snapshot(ht)
 
 		_, err := s.createTransfers(batch, nil, nil)
+		accepted.record(err == nil)
+		rejected.record(err != nil)
 		if err != nil {
 			requirePgledgerError(ht, err)
 			if diff := before.diff(s.snapshot(ht)); diff != "" {
@@ -67,27 +119,86 @@ func TestHostileAmountsNeverCorruptTheLedger(t *testing.T) {
 		}
 		s.assertInvariants(ht)
 	}, hegel.WithTestCases(propertyCases()), hegel.WithDatabase("testdata/hegel"))
+
+	accepted.require(t, "accepted the batch", 0.2)
+	rejected.require(t, "rejected the batch", 0.2)
 }
 
 // TestModelPredictsAcceptanceAndBalances is the Tier B oracle property:
 // pgledger accepts a batch exactly when the model does, ends with exactly the
 // model's balances and versions, and leaves nothing behind when it rejects.
+//
+// The axis under test is the balance constraints, so the amounts are
+// well-formed: drawing hostile amounts here as well means the amount guard
+// rejects nearly every call before a constraint can, which the coverage floor
+// below reports as vacuity. Hostile amounts have their own property.
 func TestModelPredictsAcceptanceAndBalances(t *testing.T) {
 	conn := ledgertest.Setup(t)
 	ctx := t.Context()
 
+	var accepted, rejected coverage
 	hegel.Test(t, func(ht *hegel.T) {
 		specs := hegel.Draw(ht, sameCurrencySpecsGen(2, 5, true))
 		s := newScope(ht, conn, ctx, specs)
 		m := newModel(specs)
 
-		for _, batch := range hegel.Draw(ht, hegel.Lists(batchGen(len(specs), hostileAmountGen())).MinSize(1).MaxSize(4)) {
+		landed, refused := 0, 0
+		for _, batch := range hegel.Draw(ht, hegel.Lists(batchGen(len(specs), amountGen())).MinSize(1).MaxSize(4)) {
 			before := s.snapshot(ht)
 			reason := m.applyBatch(batch)
 			_, err := s.createTransfers(batch, nil, nil)
 			assertParity(ht, s, batch, before, reason, err)
 			s.assertMatchesModel(ht, m)
+
+			if err == nil {
+				landed += len(batch)
+			} else {
+				refused++
+			}
 		}
+
+		accepted.record(landed > 0)
+		rejected.record(refused > 0)
+		ht.Target(float64(landed), "accepted transfers")
+	}, hegel.WithTestCases(propertyCases()), hegel.WithDatabase("testdata/hegel"))
+
+	accepted.require(t, "accepted a batch", 0.3)
+	rejected.require(t, "rejected a batch", 0.3)
+}
+
+// TestCrossCurrencyTransfersAreRejectedWithoutTrace is the other half of the
+// oracle: the currency check runs after both balance UPDATEs have already run,
+// so the whole statement has to roll back.
+func TestCrossCurrencyTransfersAreRejectedWithoutTrace(t *testing.T) {
+	conn := ledgertest.Setup(t)
+	ctx := t.Context()
+
+	hegel.Test(t, func(ht *hegel.T) {
+		specs := hegel.Draw(ht, differentCurrencySpecsGen())
+		s := newScope(ht, conn, ctx, specs)
+
+		// A same-currency transfer first, so the rejection below is compared
+		// against a ledger that is not empty.
+		third := accountSpec{Currency: specs[0].Currency, AllowNeg: true, AllowPos: true}
+		s.addAccount(ht, third)
+		if _, err := s.createTransfer(request{FromIdx: 0, ToIdx: 2, Amount: hegel.Draw(ht, amountGen())}, nil, nil); err != nil {
+			ht.Fatalf("same-currency transfer between %s accounts: %v", specs[0].Currency, err)
+		}
+
+		before := s.snapshot(ht)
+		req := request{FromIdx: 0, ToIdx: 1, Amount: hegel.Draw(ht, amountGen())}
+		_, err := s.createTransfer(req, nil, nil)
+		if err == nil {
+			ht.Fatalf("transfer from %s to %s was accepted", specs[0].Currency, specs[1].Currency)
+		}
+		requirePgledgerError(ht, err)
+		if !strings.Contains(err.Error(), "Cannot transfer between different currencies") {
+			ht.Fatalf("unexpected rejection for %s -> %s: %v", specs[0].Currency, specs[1].Currency, err)
+		}
+		if diff := before.diff(s.snapshot(ht)); diff != "" {
+			ht.Fatalf("rejected cross-currency transfer mutated the ledger: %s", diff)
+		}
+		s.assertInvariants(ht)
 	}, hegel.WithTestCases(propertyCases()), hegel.WithDatabase("testdata/hegel"))
 }
 
@@ -99,9 +210,8 @@ func TestTransferAndReverseRestoreBalances(t *testing.T) {
 	ctx := t.Context()
 
 	hegel.Test(t, func(ht *hegel.T) {
-		specs := hegel.Draw(ht, hegel.Lists(unconstrainedSpecGen()).MinSize(1).MaxSize(1))
-		specs = append(specs, accountSpec{Currency: specs[0].Currency, AllowNeg: true, AllowPos: true})
-		s := newScope(ht, conn, ctx, specs)
+		spec := hegel.Draw(ht, unconstrainedSpecGen())
+		s := newScope(ht, conn, ctx, []accountSpec{spec, spec})
 
 		amount := hegel.Draw(ht, amountGen())
 		forward := request{FromIdx: 0, ToIdx: 1, Amount: amount}
@@ -173,24 +283,173 @@ func TestSplitTransferEqualsSingleTransfer(t *testing.T) {
 	}, hegel.WithTestCases(propertyCases()), hegel.WithDatabase("testdata/hegel"))
 }
 
-// TestMetadataRoundTripsAsJsonb is the Tier C roundtrip property. jsonb
-// normalises key order and drops duplicate keys, so the comparison is made by
-// PostgreSQL as jsonb rather than on the returned text.
+// TestBatchOrderDoesNotChangeBalances is the Tier C permutation property,
+// conditional on accounts that permit any balance: with no constraint to trip,
+// a batch and any permutation of it end with the same balances. The
+// order-sensitive half — constrained accounts, where permutation changes
+// accept/reject — is pinned by TestBatchOrderIsSignificant in the example
+// suite, because it is specified behaviour rather than an invariant.
+func TestBatchOrderDoesNotChangeBalances(t *testing.T) {
+	conn := ledgertest.Setup(t)
+	ctx := t.Context()
+
+	hegel.Test(t, func(ht *hegel.T) {
+		// Two disjoint halves of the same shape: the first runs the batch as
+		// drawn, the second runs the permutation.
+		half := hegel.Draw(ht, hegel.Integers(2, 4))
+		currency := hegel.Draw(ht, currencyGen())
+		specs := make([]accountSpec, 2*half)
+		for i := range specs {
+			specs[i] = accountSpec{Currency: currency, AllowNeg: true, AllowPos: true}
+		}
+		s := newScope(ht, conn, ctx, specs)
+
+		batch := hegel.Draw(ht, hegel.Lists(requestGen(half, amountGen())).MinSize(2).MaxSize(5))
+		permuted := make([]request, len(batch))
+		copy(permuted, batch)
+		for i := len(permuted) - 1; i > 0; i-- {
+			j := hegel.Draw(ht, hegel.Integers(0, i))
+			permuted[i], permuted[j] = permuted[j], permuted[i]
+		}
+		shifted := make([]request, len(permuted))
+		for i, r := range permuted {
+			shifted[i] = request{FromIdx: r.FromIdx + half, ToIdx: r.ToIdx + half, Amount: r.Amount}
+		}
+		ht.Note("as drawn " + describe(batch) + ", permuted " + describe(permuted))
+
+		if _, err := s.createTransfers(batch, nil, nil); err != nil {
+			ht.Fatalf("batch %s: %v", describe(batch), err)
+		}
+		if _, err := s.createTransfers(shifted, nil, nil); err != nil {
+			ht.Fatalf("permuted batch %s: %v", describe(permuted), err)
+		}
+
+		ids := s.accountIDs()
+		for i := range half {
+			asDrawn := ledgertest.GetAccount(ht, conn, ids[i]).Balance
+			asPermuted := ledgertest.GetAccount(ht, conn, ids[i+half]).Balance
+			if mustRat(ht, "balance as drawn", asDrawn).Cmp(mustRat(ht, "balance permuted", asPermuted)) != 0 {
+				ht.Fatalf("account %d holds %s as drawn but %s permuted", i, asDrawn, asPermuted)
+			}
+		}
+		s.assertInvariants(ht)
+	}, hegel.WithTestCases(propertyCases()), hegel.WithDatabase("testdata/hegel"))
+}
+
+// TestTransfersAreNotIdempotent pins the absence of an idempotency key: the
+// same call issued twice creates two transfers and moves the balance twice. A
+// future dedupe feature must break this test rather than land silently.
+func TestTransfersAreNotIdempotent(t *testing.T) {
+	conn := ledgertest.Setup(t)
+	ctx := t.Context()
+
+	hegel.Test(t, func(ht *hegel.T) {
+		spec := hegel.Draw(ht, unconstrainedSpecGen())
+		s := newScope(ht, conn, ctx, []accountSpec{spec, spec})
+
+		amount := hegel.Draw(ht, amountGen())
+		req := request{FromIdx: 0, ToIdx: 1, Amount: amount}
+		eventAt := hegel.Draw(ht, eventAtGen())
+		metadata := `{"idempotency-key": "same"}`
+
+		first, err := s.createTransfer(req, &eventAt, &metadata)
+		if err != nil {
+			ht.Fatalf("first transfer of %s: %v", amount, err)
+		}
+		second, err := s.createTransfer(req, &eventAt, &metadata)
+		if err != nil {
+			ht.Fatalf("repeated transfer of %s: %v", amount, err)
+		}
+		if first[0].ID == second[0].ID {
+			ht.Fatalf("both calls returned transfer %s", first[0].ID)
+		}
+
+		want := new(big.Rat).Mul(mustRat(ht, "amount", amount), big.NewRat(2, 1))
+		destination := ledgertest.GetAccount(ht, conn, s.accountIDs()[1])
+		if mustRat(ht, "destination balance", destination.Balance).Cmp(want) != 0 {
+			ht.Fatalf("two transfers of %s left %s, want %s", amount, destination.Balance, ratString(want))
+		}
+		if destination.Version != 2 {
+			ht.Fatalf("destination version is %d after two transfers, want 2", destination.Version)
+		}
+		s.assertInvariants(ht)
+	}, hegel.WithTestCases(propertyCases()), hegel.WithDatabase("testdata/hegel"))
+}
+
+// TestEventAtAndMetadataApplyToEveryTransferInBatch covers the timestamp
+// contract: created_at falls inside the call, event_at defaults to created_at,
+// and one event_at/metadata argument fans out to every transfer in the batch.
+func TestEventAtAndMetadataApplyToEveryTransferInBatch(t *testing.T) {
+	conn := ledgertest.Setup(t)
+	ctx := t.Context()
+
+	clock := func(tc hegel.TestCase) time.Time {
+		var now time.Time
+		if err := conn.QueryRow(ctx, "select clock_timestamp()").Scan(&now); err != nil {
+			tc.Errorf("read server clock: %v", err)
+		}
+		return now
+	}
+
+	hegel.Test(t, func(ht *hegel.T) {
+		specs := hegel.Draw(ht, sameCurrencySpecsGen(2, 4, false))
+		s := newScope(ht, conn, ctx, specs)
+		batch := hegel.Draw(ht, batchGen(len(specs), amountGen()))
+
+		before := clock(ht)
+		defaulted, err := s.createTransfers(batch, nil, nil)
+		after := clock(ht)
+		if err != nil {
+			ht.Fatalf("batch %s: %v", describe(batch), err)
+		}
+		for i, transfer := range defaulted {
+			if transfer.CreatedAt.Before(before) || transfer.CreatedAt.After(after) {
+				ht.Fatalf("transfer %d created_at %s is outside the call window [%s, %s]",
+					i, transfer.CreatedAt, before, after)
+			}
+			if !transfer.EventAt.Equal(transfer.CreatedAt) {
+				ht.Fatalf("transfer %d defaulted event_at to %s but created_at is %s",
+					i, transfer.EventAt, transfer.CreatedAt)
+			}
+			if !transfer.CreatedAt.Equal(defaulted[0].CreatedAt) {
+				ht.Fatalf("transfer %d created_at %s differs from the first row's %s",
+					i, transfer.CreatedAt, defaulted[0].CreatedAt)
+			}
+			if transfer.Metadata != nil {
+				ht.Fatalf("transfer %d has metadata %s but none was supplied", i, *transfer.Metadata)
+			}
+		}
+
+		eventAt := hegel.Draw(ht, eventAtGen())
+		metadata := `{"batch": true}`
+		supplied, err := s.createTransfers(batch, &eventAt, &metadata)
+		if err != nil {
+			ht.Fatalf("batch %s with event_at %s: %v", describe(batch), eventAt, err)
+		}
+		for i, transfer := range supplied {
+			if !transfer.EventAt.Equal(eventAt) {
+				ht.Fatalf("transfer %d has event_at %s, want the supplied %s", i, transfer.EventAt, eventAt)
+			}
+			if transfer.Metadata == nil || *transfer.Metadata != metadata {
+				ht.Fatalf("transfer %d has metadata %v, want %s", i, transfer.Metadata, metadata)
+			}
+		}
+		s.assertInvariants(ht)
+	}, hegel.WithTestCases(propertyCases()), hegel.WithDatabase("testdata/hegel"))
+}
+
+// TestMetadataRoundTripsAsJsonb is the Tier C roundtrip property over
+// arbitrary nested JSON. jsonb normalises key order and drops duplicate keys,
+// so the comparison is made by PostgreSQL as jsonb rather than on text.
 func TestMetadataRoundTripsAsJsonb(t *testing.T) {
 	conn := ledgertest.Setup(t)
 	ctx := t.Context()
 
 	hegel.Test(t, func(ht *hegel.T) {
-		currency := hegel.Draw(ht, currencyGen())
-		s := newScope(ht, conn, ctx, []accountSpec{
-			{Currency: currency, AllowNeg: true, AllowPos: true},
-			{Currency: currency, AllowNeg: true, AllowPos: true},
-		})
+		spec := hegel.Draw(ht, unconstrainedSpecGen())
+		s := newScope(ht, conn, ctx, []accountSpec{spec, spec})
 
-		raw := hegel.Draw(ht, hegel.Maps(
-			hegel.Text().MinSize(1).MaxSize(8).Categories([]string{"L", "Nd"}),
-			hegel.Integers(-1000, 1000),
-		).MaxSize(4))
+		raw := hegel.Draw(ht, metadataGen())
 		encoded, err := json.Marshal(raw)
 		if err != nil {
 			ht.Fatalf("marshal metadata %v: %v", raw, err)
@@ -209,7 +468,7 @@ func TestMetadataRoundTripsAsJsonb(t *testing.T) {
 		if err := conn.QueryRow(ctx,
 			`select metadata = $1::jsonb from pgledger_transfers_view where id = $2`,
 			metadata, transfers[0].ID).Scan(&same); err != nil {
-			ht.Fatalf("metadata comparison: %v", err)
+			ht.Fatalf("comparing metadata %s: %v", metadata, err)
 		}
 		if !same {
 			stored := "<null>"
@@ -219,15 +478,81 @@ func TestMetadataRoundTripsAsJsonb(t *testing.T) {
 			ht.Fatalf("metadata %s round-tripped as %s", metadata, stored)
 		}
 
-		// The entries view denormalises the transfer's metadata (A8).
-		for _, id := range s.accountIDs() {
-			for _, entry := range ledgertest.GetEntries(ht, conn, id) {
-				if entry.Metadata == nil {
-					ht.Fatalf("entry %s has no metadata", entry.ID)
+		// assertInvariants checks that the entries view denormalises this
+		// metadata from the transfer row it joins to.
+		s.assertInvariants(ht)
+	}, hegel.WithTestCases(propertyCases()), hegel.WithDatabase("testdata/hegel"))
+}
+
+// TestHistoricalBalancesReplayFromEntries covers the documented reconciliation
+// query: the newest entry at or before an instant carries the balance the
+// account held then. One transfer per call keeps created_at distinct per
+// account, which is what makes "order by created_at desc limit 1" well defined.
+func TestHistoricalBalancesReplayFromEntries(t *testing.T) {
+	conn := ledgertest.Setup(t)
+	ctx := t.Context()
+
+	hegel.Test(t, func(ht *hegel.T) {
+		specs := hegel.Draw(ht, sameCurrencySpecsGen(2, 4, false))
+		s := newScope(ht, conn, ctx, specs)
+		m := newModel(specs)
+
+		type checkpoint struct {
+			at       time.Time
+			balances []*big.Rat
+		}
+		var history []checkpoint
+
+		for _, req := range hegel.Draw(ht, hegel.Lists(requestGen(len(specs), amountGen())).MinSize(1).MaxSize(6)) {
+			if reason := m.applyBatch([]request{req}); reason != "" {
+				ht.Fatalf("model rejected %s: %s", describe([]request{req}), reason)
+			}
+			if _, err := s.createTransfer(req, nil, nil); err != nil {
+				ht.Fatalf("transfer %s: %v", describe([]request{req}), err)
+			}
+
+			var at time.Time
+			if err := conn.QueryRow(ctx, "select clock_timestamp()").Scan(&at); err != nil {
+				ht.Fatalf("read server clock: %v", err)
+			}
+			balances := make([]*big.Rat, len(m.accounts))
+			for i, account := range m.accounts {
+				balances[i] = new(big.Rat).Set(account.Balance)
+			}
+			history = append(history, checkpoint{at: at, balances: balances})
+		}
+
+		ids := s.accountIDs()
+		for step, point := range history {
+			for i, id := range ids {
+				got, err := balanceAt(ctx, conn, id, point.at)
+				if err != nil {
+					ht.Fatalf("historical balance of account %d: %v", i, err)
+				}
+				if mustRat(ht, "historical balance", got).Cmp(point.balances[i]) != 0 {
+					ht.Fatalf("account %d held %s after step %d, want %s",
+						i, got, step, ratString(point.balances[i]))
 				}
 			}
 		}
+		s.assertInvariants(ht)
 	}, hegel.WithTestCases(propertyCases()), hegel.WithDatabase("testdata/hegel"))
+}
+
+// balanceAt is the query documented in examples/reconciliation.sql. An account
+// with no entry yet held nothing.
+func balanceAt(ctx context.Context, conn *pgxpool.Pool, accountID string, at time.Time) (string, error) {
+	var balance string
+	err := conn.QueryRow(ctx, `
+		select account_current_balance::text
+		from pgledger_entries
+		where account_id = $1 and created_at <= $2
+		order by created_at desc
+		limit 1`, accountID, at).Scan(&balance)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "0", nil
+	}
+	return balance, err
 }
 
 // assertReturnedMatchesRequests is property A6: pgledger_create_transfers
@@ -236,6 +561,7 @@ func TestMetadataRoundTripsAsJsonb(t *testing.T) {
 func assertReturnedMatchesRequests(tc hegel.TestCase, s *scope, reqs []request, returned []ledgertest.Transfer) {
 	if len(returned) != len(reqs) {
 		tc.Errorf("returned %d transfers for %d requests", len(returned), len(reqs))
+		return
 	}
 	ids := s.accountIDs()
 	for i, r := range reqs {
@@ -243,31 +569,12 @@ func assertReturnedMatchesRequests(tc hegel.TestCase, s *scope, reqs []request, 
 		if got.FromAccountID != ids[r.FromIdx] || got.ToAccountID != ids[r.ToIdx] {
 			tc.Errorf("request %d was %d->%d but came back %s->%s",
 				i, r.FromIdx, r.ToIdx, got.FromAccountID, got.ToAccountID)
+			return
 		}
 		want := mustRat(tc, "requested amount", r.Amount)
 		if mustRat(tc, "returned amount", got.Amount).Cmp(want) != 0 {
 			tc.Errorf("request %d asked for %s but came back as %s", i, r.Amount, got.Amount)
+			return
 		}
 	}
-}
-
-// requirePgledgerError holds pgledger to its error contract: a rejected call
-// raises a pgledger exception (P0001) or one of the integrity violations its
-// schema is built on, never an internal failure such as an undefined function
-// or a syntax error.
-func requirePgledgerError(tc hegel.TestCase, err error) {
-	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) {
-		tc.Errorf("expected a PostgreSQL error, got %T: %v", err, err)
-		return
-	}
-	switch pgErr.Code {
-	case "P0001", // raise_exception: pgledger's own guards
-		"23502", // not_null_violation
-		"23503", // foreign_key_violation
-		"23514", // check_violation
-		"22P02": // invalid_text_representation
-		return
-	}
-	tc.Errorf("unexpected error class %s: %s", pgErr.Code, pgErr.Message)
 }

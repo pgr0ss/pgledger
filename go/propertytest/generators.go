@@ -6,9 +6,11 @@
 package propertytest
 
 import (
+	"math"
 	"math/big"
 	"os"
 	"strconv"
+	"time"
 
 	"hegel.dev/go/hegel"
 )
@@ -28,10 +30,15 @@ func propertyCases() int {
 // fails the test case when the value is not one, which is how a NaN or
 // Infinity balance is detected: those are not numbers, and no later transfer
 // can restore an account that holds one.
+//
+// hegel.TestCase.Errorf aborts the test case, so the zero value returned after
+// it is unreachable; it exists so a caller can never dereference a nil *big.Rat
+// if that ever changes.
 func mustRat(tc hegel.TestCase, what, s string) *big.Rat {
 	r, ok := new(big.Rat).SetString(s)
 	if !ok {
 		tc.Errorf("%s is not a finite number: %q", what, s)
+		return new(big.Rat)
 	}
 	return r
 }
@@ -70,26 +77,18 @@ func hostileAmountGen() hegel.Generator[string] {
 	)
 }
 
-// currencyGen includes 'usd' alongside 'USD': currency comparison is
+// currencies includes 'usd' alongside 'USD': currency comparison is
 // case-sensitive, so those two must never transfer to each other.
+var currencies = []string{"USD", "EUR", "JPY", "usd"}
+
 func currencyGen() hegel.Generator[string] {
-	return hegel.SampledFrom([]string{"USD", "EUR", "JPY", "usd"})
+	return hegel.SampledFrom(currencies)
 }
 
 type accountSpec struct {
 	Currency string
 	AllowNeg bool
 	AllowPos bool
-}
-
-func accountSpecGen() hegel.Generator[accountSpec] {
-	return hegel.Composite(func(tc hegel.TestCase) accountSpec {
-		return accountSpec{
-			Currency: hegel.Draw(tc, currencyGen()),
-			AllowNeg: hegel.Draw(tc, hegel.Booleans()),
-			AllowPos: hegel.Draw(tc, hegel.Booleans()),
-		}
-	})
 }
 
 // unconstrainedSpecGen draws accounts that permit any balance, for the
@@ -119,6 +118,88 @@ func sameCurrencySpecsGen(minAccounts, maxAccounts int, constrained bool) hegel.
 			}
 		}
 		return specs
+	})
+}
+
+// differentCurrencySpecsGen draws two accounts whose currencies differ, which
+// is the only shape that reaches the currency check.
+func differentCurrencySpecsGen() hegel.Generator[[]accountSpec] {
+	return hegel.Composite(func(tc hegel.TestCase) []accountSpec {
+		from := hegel.Draw(tc, hegel.Integers(0, len(currencies)-1))
+		to := hegel.Draw(tc, hegel.Integers(0, len(currencies)-2))
+		if to >= from {
+			to++
+		}
+		return []accountSpec{
+			{Currency: currencies[from], AllowNeg: true, AllowPos: true},
+			{Currency: currencies[to], AllowNeg: true, AllowPos: true},
+		}
+	})
+}
+
+// jsonTextGen draws strings for metadata keys and values. A \u0000 in a string
+// is rejected by jsonb itself rather than by pgledger, so it is excluded here
+// and pinned by an example test instead.
+func jsonTextGen() hegel.Generator[string] {
+	return hegel.Text().MaxSize(6).ExcludeCategories([]string{"Cs"}).ExcludeCharacters("\x00")
+}
+
+// jsonValueGen draws an arbitrary JSON value, nesting up to depth levels of
+// objects and arrays. Integers span the int64 range because jsonb stores
+// numerics, not machine integers.
+func jsonValueGen(depth int) hegel.Generator[any] {
+	return hegel.Composite(func(tc hegel.TestCase) any {
+		const scalarKinds = 3
+		maxKind := scalarKinds
+		if depth > 0 {
+			maxKind = scalarKinds + 2
+		}
+
+		switch hegel.Draw(tc, hegel.Integers(0, maxKind)) {
+		case 0:
+			return nil
+		case 1:
+			return hegel.Draw(tc, hegel.Booleans())
+		case 2:
+			return hegel.Draw(tc, hegel.Integers[int64](math.MinInt64, math.MaxInt64))
+		case 3:
+			return hegel.Draw(tc, jsonTextGen())
+		case 4:
+			items := make([]any, hegel.Draw(tc, hegel.Integers(0, 3)))
+			for i := range items {
+				items[i] = hegel.Draw(tc, jsonValueGen(depth-1))
+			}
+			return items
+		default:
+			object := map[string]any{}
+			for range hegel.Draw(tc, hegel.Integers(0, 3)) {
+				object[hegel.Draw(tc, jsonTextGen())] = hegel.Draw(tc, jsonValueGen(depth-1))
+			}
+			return object
+		}
+	})
+}
+
+// metadataGen draws a JSON object, which is the shape callers actually pass as
+// transfer metadata.
+func metadataGen() hegel.Generator[map[string]any] {
+	return hegel.Composite(func(tc hegel.TestCase) map[string]any {
+		object := map[string]any{}
+		for range hegel.Draw(tc, hegel.Integers(0, 4)) {
+			object[hegel.Draw(tc, jsonTextGen())] = hegel.Draw(tc, jsonValueGen(2))
+		}
+		return object
+	})
+}
+
+// eventAtGen draws a timestamp spanning a few years either side of a fixed
+// instant: event_at records when the real-world event happened, so past and
+// future values are both legitimate.
+func eventAtGen() hegel.Generator[time.Time] {
+	base := time.Date(2020, time.June, 15, 12, 0, 0, 0, time.UTC)
+	return hegel.Composite(func(tc hegel.TestCase) time.Time {
+		offset := hegel.Draw(tc, hegel.Integers[int64](-100_000_000, 100_000_000))
+		return base.Add(time.Duration(offset) * time.Second)
 	})
 }
 

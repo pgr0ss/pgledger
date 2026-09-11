@@ -2,11 +2,13 @@ package test
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 
@@ -471,17 +473,29 @@ func TestEntries(t *testing.T) {
 	assert.Equal(t, entries[2].CreatedAt, entries[2].EventAt)
 }
 
-func TestTransferAmountsArePositive(t *testing.T) {
+func TestTransferAmountsMustBePositiveAndFinite(t *testing.T) {
 	conn := ledgertest.Setup(t)
 
 	account1 := ledgertest.CreateAccount(t, conn, "account 1", "USD")
 	account2 := ledgertest.CreateAccount(t, conn, "account 2", "USD")
 
-	_, err := ledgertest.CreateTransferReturnErr(t.Context(), conn, account1.ID, account2.ID, "0")
-	assert.ErrorContains(t, err, "Amount (0) must be positive")
+	transfer := ledgertest.CreateTransfer(t, conn, account1.ID, account2.ID, "10")
+	assert.Equal(t, "10", transfer.Amount)
 
-	_, err = ledgertest.CreateTransferReturnErr(t.Context(), conn, account1.ID, account2.ID, "-0.01")
-	assert.ErrorContains(t, err, "Amount (-0.01) must be positive")
+	// NaN and Infinity compare greater than every finite number, so a bare
+	// amount > 0 guard accepts them and the balance becomes unrecoverable.
+	for _, amount := range []string{"0", "-0.01", "NaN", "Infinity", "-Infinity"} {
+		_, err := ledgertest.CreateTransferReturnErr(t.Context(), conn, account1.ID, account2.ID, amount)
+		assert.ErrorContains(t, err, fmt.Sprintf("Amount (%s) must be a positive finite number", amount))
+	}
+
+	_, err := conn.Exec(t.Context(),
+		"select * from pgledger_create_transfers(($1::text, $2::text, $3::numeric))",
+		account1.ID, account2.ID, nil)
+	assert.ErrorContains(t, err, "Amount (<NULL>) must be a positive finite number")
+
+	assert.Equal(t, "-10", ledgertest.GetAccount(t, conn, account1.ID).Balance)
+	assert.Equal(t, "10", ledgertest.GetAccount(t, conn, account2.ID).Balance)
 }
 
 func TestCannotTransferBetweenDifferentCurrencies(t *testing.T) {
@@ -664,6 +678,103 @@ func TestFindHistoricalBalanceAtGivenTime(t *testing.T) {
 	assert.Equal(t, "30", accountBalanceAtTime(t, conn, account2.ID, "2025-06-01T13:15:00Z"))
 	assert.Equal(t, "80", accountBalanceAtTime(t, conn, account2.ID, "2025-06-01T14:00:00Z"))
 	assert.Equal(t, "80", accountBalanceAtTime(t, conn, account2.ID, "2025-06-01T14:15:00Z"))
+}
+
+func TestBatchOrderIsSignificant(t *testing.T) {
+	conn := ledgertest.Setup(t)
+
+	createAccounts := func() (*ledgertest.Account, *ledgertest.Account, *ledgertest.Account) {
+		x := ledgertest.CreateAccount(t, conn, "x", "USD")
+		y := ledgertest.QueryOne[ledgertest.Account](t, conn, "select * from pgledger_create_account($1, $2, allow_negative_balance => false)", "y positive-only", "USD")
+		z := ledgertest.CreateAccount(t, conn, "z", "USD")
+
+		return x, y, z
+	}
+
+	// Balance constraints are checked after each request, not at the end of the
+	// batch, so the same multiset of requests passes or fails depending on order.
+	x, y, z := createAccounts()
+
+	rows, err := conn.Query(t.Context(), `
+		select * from pgledger_create_transfers(array[
+			($1, $2, '10'),
+			($2, $3, '10')
+		]::transfer_request[])`,
+		x.ID, y.ID, z.ID)
+	assert.NoError(t, err)
+
+	transfers, err := pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[ledgertest.Transfer])
+	assert.NoError(t, err)
+	assert.Len(t, transfers, 2)
+	assert.Equal(t, x.ID, transfers[0].FromAccountID)
+	assert.Equal(t, y.ID, transfers[0].ToAccountID)
+	assert.Equal(t, y.ID, transfers[1].FromAccountID)
+	assert.Equal(t, z.ID, transfers[1].ToAccountID)
+
+	assert.Equal(t, "-10", ledgertest.GetAccount(t, conn, x.ID).Balance)
+	assert.Equal(t, "0", ledgertest.GetAccount(t, conn, y.ID).Balance)
+	assert.Equal(t, "10", ledgertest.GetAccount(t, conn, z.ID).Balance)
+
+	reversedX, reversedY, reversedZ := createAccounts()
+
+	_, err = conn.Exec(t.Context(), `
+		select * from pgledger_create_transfers(array[
+			($2, $3, '10'),
+			($1, $2, '10')
+		]::transfer_request[])`,
+		reversedX.ID, reversedY.ID, reversedZ.ID)
+	assert.ErrorContains(t, err, fmt.Sprintf("Account (id=%s, name=%s) does not allow negative balance", reversedY.ID, "y positive-only"))
+
+	assert.Equal(t, "0", ledgertest.GetAccount(t, conn, reversedX.ID).Balance)
+	assert.Equal(t, "0", ledgertest.GetAccount(t, conn, reversedY.ID).Balance)
+	assert.Equal(t, "0", ledgertest.GetAccount(t, conn, reversedZ.ID).Balance)
+
+	assert.Equal(t, 0, ledgertest.GetAccount(t, conn, reversedX.ID).Version)
+	assert.Equal(t, 0, ledgertest.GetAccount(t, conn, reversedY.ID).Version)
+	assert.Equal(t, 0, ledgertest.GetAccount(t, conn, reversedZ.ID).Version)
+}
+
+func TestNullTransferRequestsArrayIsRejected(t *testing.T) {
+	conn := ledgertest.Setup(t)
+
+	// This is a raw plpgsql error leaking through rather than a pgledger
+	// message, pinned here so replacing it becomes a deliberate change.
+	rows, err := conn.Query(t.Context(), "select * from pgledger_create_transfers($1::transfer_request[])", nil)
+	assert.NoError(t, err)
+
+	_, err = pgx.CollectRows(rows, pgx.RowToAddrOfStructByName[ledgertest.Transfer])
+	assert.ErrorContains(t, err, "FOREACH expression must not be null")
+
+	// SQLSTATE 22004 (null_value_not_allowed) rather than the P0001 a pgledger
+	// RAISE EXCEPTION would produce.
+	var pgErr *pgconn.PgError
+	assert.ErrorAs(t, err, &pgErr)
+	assert.Equal(t, "22004", pgErr.Code)
+}
+
+func TestAccountNameAndCurrencyExtremes(t *testing.T) {
+	conn := ledgertest.Setup(t)
+
+	longName := strings.Repeat("a", 10*1024)
+	unicodeName := "café ☕ 日本語 🏦 Ωμέγα"
+	unicodeCurrency := strings.Repeat("₿🇯🇵日本円", 10)
+
+	emptyNameAccount := ledgertest.CreateAccount(t, conn, "", "USD")
+	longNameAccount := ledgertest.CreateAccount(t, conn, longName, "USD")
+	unicodeAccount := ledgertest.CreateAccount(t, conn, unicodeName, unicodeCurrency)
+
+	assert.Equal(t, "", ledgertest.GetAccount(t, conn, emptyNameAccount.ID).Name)
+	assert.Equal(t, longName, ledgertest.GetAccount(t, conn, longNameAccount.ID).Name)
+	assert.Equal(t, unicodeName, ledgertest.GetAccount(t, conn, unicodeAccount.ID).Name)
+	assert.Equal(t, unicodeCurrency, ledgertest.GetAccount(t, conn, unicodeAccount.ID).Currency)
+
+	otherUnicodeAccount := ledgertest.CreateAccount(t, conn, unicodeName+" 2", unicodeCurrency)
+
+	transfer := ledgertest.CreateTransfer(t, conn, unicodeAccount.ID, otherUnicodeAccount.ID, "12.34")
+	assert.Equal(t, "12.34", transfer.Amount)
+
+	assert.Equal(t, "-12.34", ledgertest.GetAccount(t, conn, unicodeAccount.ID).Balance)
+	assert.Equal(t, "12.34", ledgertest.GetAccount(t, conn, otherUnicodeAccount.ID).Balance)
 }
 
 func accountBalanceAtTime(t *testing.T, conn *pgxpool.Pool, accountID string, datetime string) string {
