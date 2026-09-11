@@ -1,4 +1,4 @@
-set dotenv-load := true
+set dotenv-load
 
 dbname := "pgledger"
 
@@ -32,8 +32,9 @@ tidy:
 test:
     cd go && go test -v ./...
 
+# Runs the bounded property suite. -count=1 disables Go's test cache
 property-tests: dbreset
-    cd go && go test -v -tags property ./propertytest/
+    cd go && go test -v -count=1 -tags property ./propertytest/
 
 # Runs the property suite as an unbounded workload until the duration elapses.
 # A clean cut-off by the timer is a pass; any other exit status is a failure.

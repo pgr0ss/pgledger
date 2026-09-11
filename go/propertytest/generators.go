@@ -23,7 +23,7 @@ func propertyCases() int {
 			return n
 		}
 	}
-	return 25
+	return 100
 }
 
 // mustRat parses a NUMERIC read back from PostgreSQL as an exact decimal. It
