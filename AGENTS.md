@@ -76,6 +76,8 @@ docker compose up      # start PostgreSQL
 just check             # full suite: dbreset, clean, tidy, format-sql, test, lint
 ```
 
+`POSTGRES_PORT` (default 5432) sets the host port Docker Compose publishes and the port the Go tests and `performance_check` connect to. The justfile has `set dotenv-load := true`, so a `.env` file with `POSTGRES_PORT=5433` gives a checkout its own database container; real environment variables take precedence over `.env`.
+
 Common commands:
 
 | Command | What it does |
@@ -90,7 +92,7 @@ Common commands:
 
 ## Testing
 
-Tests are Go integration tests in `go/test/` using pgx and testify. They connect to PostgreSQL at `postgres://pgledger:pgledger@localhost:5432/pgledger`. All tests call the SQL functions directly and verify results through the views.
+Tests are Go integration tests in `go/test/` using pgx and testify. They connect to PostgreSQL at `postgres://pgledger:pgledger@localhost:5432/pgledger`, where the port comes from `POSTGRES_PORT` (default 5432) via `go/internal/dburl`. All tests call the SQL functions directly and verify results through the views.
 
 Test helpers in `go/test/test_helpers.go` define Go structs (Account, Transfer, Entry) that map to the view columns, plus helper functions for creating accounts, transfers, and querying entries.
 
