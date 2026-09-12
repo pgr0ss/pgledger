@@ -1,6 +1,6 @@
 [tools]
 go = "1.27.1"                  # Matches the version in go.mod
-uv = "0.12.8"
+uv = "0.12.10"
 "github:casey/just" = "1.58.0"
 golangci-lint = "2.13.2"
 "pipx:sqlfluff" = "4.0.0"
