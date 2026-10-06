@@ -181,7 +181,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Function to create multiple transfers in a single transaction without an event_at
-CREATE OR REPLACE FUNCTION pgledger_create_transfers(VARIADIC transfer_requests TRANSFER_REQUEST [])
+CREATE OR REPLACE FUNCTION pgledger_create_transfers(VARIADIC transfer_requests TRANSFER_REQUEST[])
 RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
 AS $$
 BEGIN
@@ -191,7 +191,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION pgledger_create_transfers(
-    transfer_requests TRANSFER_REQUEST [],
+    transfer_requests TRANSFER_REQUEST[],
     event_at TIMESTAMPTZ DEFAULT NULL,
     metadata JSONB DEFAULT NULL
 )

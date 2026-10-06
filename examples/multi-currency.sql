@@ -32,7 +32,7 @@ SELECT * FROM pgledger_accounts_view
 WHERE name::LTREE <@ 'user2';
 
 -- Now, we can see that pgledger prevents transfers between accounts of different currencies:
-SELECT * FROM pgledger_create_transfer(:'user2_usd_id',:'user2_eur_id', 10.00);
+SELECT * FROM pgledger_create_transfer(:'user2_usd_id', :'user2_eur_id', 10.00);
 
 -- Instead, we need to create liquidity accounts per currency and use those for the transfers:
 SELECT id FROM pgledger_create_account('liquidity.usd', 'USD') \gset liquidity_usd_
@@ -42,8 +42,8 @@ SELECT id FROM pgledger_create_account('liquidity.eur', 'EUR') \gset liquidity_e
 -- difference between these two different amounts (10.00 vs 9.26) is the
 -- exchange rate.
 SELECT * FROM pgledger_create_transfers(
-    (:'user2_usd_id',:'liquidity_usd_id', '10.00'),
-    (:'liquidity_eur_id',:'user2_eur_id', '9.26')
+    (:'user2_usd_id', :'liquidity_usd_id', '10.00'),
+    (:'liquidity_eur_id', :'user2_eur_id', '9.26')
 );
 
 -- Note that this used the plural `pgledger_create_transfers` instead of the
@@ -58,9 +58,9 @@ SELECT * FROM pgledger_create_transfers(
     event_at => '2025-07-21T12:45:54.123Z',
     metadata => '{"external_id": "ext_123"}',
     transfer_requests => ARRAY[
-        (:'user2_usd_id',:'liquidity_usd_id', '10.00'),
-        (:'liquidity_eur_id',:'user2_eur_id', '9.26')
-    ]::TRANSFER_REQUEST []
+        (:'user2_usd_id', :'liquidity_usd_id', '10.00'),
+        (:'liquidity_eur_id', :'user2_eur_id', '9.26')
+    ]::TRANSFER_REQUEST[]
 );
 
 -- Here is what the transfers look like holistically:

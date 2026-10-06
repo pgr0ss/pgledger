@@ -51,7 +51,7 @@ SELECT * FROM pgledger_create_transfer(
 -- Now, we can query the receivables account and see that the balance is still
 -- $50, meaning we are waiting on more funds to arrive:
 SELECT balance FROM pgledger_accounts_view
-WHERE id =:'user1_receivables_id';
+WHERE id = :'user1_receivables_id';
 
 -- But how do we know which payment we're still waiting for? If we use metadata
 -- on each transfer which ties it to a payment_id, then we can do interesting
@@ -61,7 +61,7 @@ SELECT
     metadata ->> 'payment_id' AS payment_id,
     sum(amount) AS sum
 FROM pgledger_entries_view
-WHERE account_id =:'user1_receivables_id'
+WHERE account_id = :'user1_receivables_id'
 GROUP BY 1;
 
 -- This strategy can help us find other issues, such as when the amount of
@@ -79,7 +79,7 @@ SELECT
     metadata ->> 'payment_id' AS payment_id,
     sum(amount) AS sum
 FROM pgledger_entries_view
-WHERE account_id =:'user1_receivables_id'
+WHERE account_id = :'user1_receivables_id'
 GROUP BY 1
 HAVING sum(amount) != 0;
 
@@ -136,7 +136,7 @@ ORDER BY 1
 \crosstabview transfer name amount
 
 -- We can even get fancier and sum the entries for each account in the table:
-WITH entries AS ( -- noqa: PRS, the \crosstabview above breaks parsing, so we have to ignore sqlfluff from here
+WITH entries AS (
     SELECT
         concat_ws(' - ', e.transfer_id, e.metadata ->> 'kind') AS transfer,
         a.name,
@@ -144,17 +144,21 @@ WITH entries AS ( -- noqa: PRS, the \crosstabview above breaks parsing, so we ha
     FROM pgledger_entries_view e
     INNER JOIN pgledger_accounts_view a ON e.account_id = a.id
     WHERE e.metadata ->> 'payment_id' = 'p_123'
+),
+
+sums AS (
+    SELECT
+        '--- SUMS ---' AS transfer,
+        name,
+        sum(amount) AS amount
+    FROM entries
+    GROUP BY 1, 2
 )
 
 SELECT * FROM (
     SELECT * FROM entries
     UNION
-    SELECT
-        '--- SUMS ---' AS transfer,
-        name,
-        sum(amount)
-    FROM entries
-    GROUP BY 1, 2
-)
-ORDER BY transfer
+    SELECT * FROM sums
+) entries_and_sums
+ORDER BY 1
 \crosstabview transfer name amount
