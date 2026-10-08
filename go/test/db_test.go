@@ -680,6 +680,23 @@ func TestFindHistoricalBalanceAtGivenTime(t *testing.T) {
 	assert.Equal(t, "80", accountBalanceAtTime(t, conn, account2.ID, "2025-06-01T14:15:00Z"))
 }
 
+func accountBalanceAtTime(t *testing.T, conn *pgxpool.Pool, accountID string, datetime string) string {
+	rows, err := conn.Query(t.Context(), `
+		select account_current_balance
+		from pgledger_entries
+		where account_id = $1
+		and created_at <= $2
+		order by account_version desc
+		limit 1`,
+		accountID, datetime)
+	assert.NoError(t, err)
+
+	balance, err := pgx.CollectExactlyOneRow(rows, pgx.RowTo[string])
+	assert.NoError(t, err)
+
+	return balance
+}
+
 func TestBatchOrderIsSignificant(t *testing.T) {
 	conn := testhelpers.SetupParallel(t)
 
@@ -808,21 +825,4 @@ func TestAccountNameAndCurrencyExtremes(t *testing.T) {
 
 	assert.Equal(t, "-12.34", testhelpers.GetAccount(t, conn, unicodeAccount.ID).Balance)
 	assert.Equal(t, "12.34", testhelpers.GetAccount(t, conn, otherUnicodeAccount.ID).Balance)
-}
-
-func accountBalanceAtTime(t *testing.T, conn *pgxpool.Pool, accountID string, datetime string) string {
-	rows, err := conn.Query(t.Context(), `
-		select account_current_balance
-		from pgledger_entries
-		where account_id = $1
-		and created_at <= $2
-		order by account_version desc
-		limit 1`,
-		accountID, datetime)
-	assert.NoError(t, err)
-
-	balance, err := pgx.CollectExactlyOneRow(rows, pgx.RowTo[string])
-	assert.NoError(t, err)
-
-	return balance
 }
