@@ -268,7 +268,7 @@ Each entry row records the previous and current balance for the account. This me
 
 There's an example test to show this behavior:
 
-https://github.com/pgr0ss/pgledger/blob/1352114895bd4dcf44b0789751bed698203348ec/go/test/db_test.go#L479-L528
+https://github.com/pgr0ss/pgledger/blob/c793f2195be7b15774271dc59f91c3abb9ccfb5b/go/test/db_test.go#L650-L698
 
 ### Performance
 
