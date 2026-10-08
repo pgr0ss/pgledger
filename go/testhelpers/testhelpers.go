@@ -1,4 +1,4 @@
-package test
+package testhelpers
 
 import (
 	"context"
@@ -11,7 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// Make an interface so I can use dbconn with both testing.T and testing.B
+// TestingT covers *testing.T, *testing.B and propertytest.T; testing.TB cannot
+// be implemented outside the testing package.
 type TestingT interface {
 	Context() context.Context
 	Cleanup(f func())
@@ -55,13 +56,13 @@ type Entry struct {
 	Metadata               *string
 }
 
-func setupTest(t *testing.T) *pgxpool.Pool {
+func SetupParallel(t *testing.T) *pgxpool.Pool {
 	t.Parallel()
-	return dbconn(t)
+	return DBConn(t)
 }
 
-func dbconn(t TestingT) *pgxpool.Pool {
-	dbpool, err := pgxpool.New(context.Background(), dburl.URL())
+func DBConn(t TestingT) *pgxpool.Pool {
+	dbpool, err := Connect(t.Context())
 	assert.NoError(t, err)
 
 	t.Cleanup(dbpool.Close)
@@ -69,26 +70,30 @@ func dbconn(t TestingT) *pgxpool.Pool {
 	return dbpool
 }
 
-func createAccount(t TestingT, conn *pgxpool.Pool, name string, currency string) *Account {
-	return queryOne[Account](t, conn, "select * from pgledger_create_account($1, $2)", name, currency)
+func Connect(ctx context.Context) (*pgxpool.Pool, error) {
+	return pgxpool.New(ctx, dburl.URL())
 }
 
-func getAccount(t TestingT, conn *pgxpool.Pool, id string) *Account {
-	return queryOne[Account](t, conn, "select * from pgledger_accounts_view where id = $1", id)
+func CreateAccount(t TestingT, conn *pgxpool.Pool, name string, currency string) *Account {
+	return QueryOne[Account](t, conn, "select * from pgledger_create_account($1, $2)", name, currency)
 }
 
-func getTransfer(t TestingT, conn *pgxpool.Pool, id string) *Transfer {
-	return queryOne[Transfer](t, conn, "select * from pgledger_transfers_view where id = $1", id)
+func GetAccount(t TestingT, conn *pgxpool.Pool, id string) *Account {
+	return QueryOne[Account](t, conn, "select * from pgledger_accounts_view where id = $1", id)
 }
 
-func createTransfer(t TestingT, conn *pgxpool.Pool, fromAccountID, toAccountID, amount string) *Transfer {
-	transfer, err := createTransferReturnErr(t.Context(), conn, fromAccountID, toAccountID, amount)
+func GetTransfer(t TestingT, conn *pgxpool.Pool, id string) *Transfer {
+	return QueryOne[Transfer](t, conn, "select * from pgledger_transfers_view where id = $1", id)
+}
+
+func CreateTransfer(t TestingT, conn *pgxpool.Pool, fromAccountID, toAccountID, amount string) *Transfer {
+	transfer, err := CreateTransferReturnErr(t.Context(), conn, fromAccountID, toAccountID, amount)
 	assert.NoError(t, err)
 
 	return transfer
 }
 
-func createTransferReturnErr(ctx context.Context, conn *pgxpool.Pool, fromAccountID, toAccountID, amount string) (*Transfer, error) {
+func CreateTransferReturnErr(ctx context.Context, conn *pgxpool.Pool, fromAccountID, toAccountID, amount string) (*Transfer, error) {
 	rows, err := conn.Query(ctx, "select * from pgledger_create_transfers(($1, $2, $3))", fromAccountID, toAccountID, amount)
 	if err != nil {
 		return nil, err
@@ -102,7 +107,7 @@ func createTransferReturnErr(ctx context.Context, conn *pgxpool.Pool, fromAccoun
 	return transfer, nil
 }
 
-func getEntries(t TestingT, conn *pgxpool.Pool, accountID string) []Entry {
+func GetEntries(t TestingT, conn *pgxpool.Pool, accountID string) []Entry {
 	rows, err := conn.Query(t.Context(), "select * from pgledger_entries_view where account_id = $1 order by id", accountID)
 	assert.NoError(t, err)
 
@@ -112,7 +117,7 @@ func getEntries(t TestingT, conn *pgxpool.Pool, accountID string) []Entry {
 	return entries
 }
 
-func queryOne[T any](t TestingT, conn *pgxpool.Pool, sql string, args ...any) *T {
+func QueryOne[T any](t TestingT, conn *pgxpool.Pool, sql string, args ...any) *T {
 	rows, err := conn.Query(t.Context(), sql, args...)
 	assert.NoError(t, err)
 

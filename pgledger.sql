@@ -60,7 +60,7 @@ CREATE TABLE pgledger_transfers (
     created_at TIMESTAMPTZ NOT NULL,
     event_at TIMESTAMPTZ NOT NULL,
     metadata JSONB,
-    CHECK (amount > 0 AND from_account_id != to_account_id)
+    CHECK (amount > 0 AND amount < 'Infinity'::NUMERIC AND from_account_id != to_account_id)
 );
 
 CREATE INDEX ON pgledger_transfers (from_account_id);
@@ -207,6 +207,10 @@ DECLARE
     to_account_id TEXT;
     all_account_ids TEXT[] := '{}';
 BEGIN
+    IF transfer_requests IS NULL THEN
+        RAISE EXCEPTION 'Transfer requests must not be null';
+    END IF;
+
     -- Collect all unique account IDs and sort them to prevent deadlocks
     FOREACH transfer_request IN ARRAY transfer_requests LOOP
         all_account_ids := array_append(all_account_ids, transfer_request.from_account_id);
@@ -228,8 +232,14 @@ BEGIN
     -- Process each transfer
     FOREACH transfer_request IN ARRAY transfer_requests LOOP
         -- Preliminary checks
-        IF transfer_request.amount <= 0 THEN
-            RAISE EXCEPTION 'Amount (%) must be positive', transfer_request.amount;
+        IF transfer_request.amount IS NULL
+            OR NOT (transfer_request.amount > 0 AND transfer_request.amount < 'Infinity'::NUMERIC) THEN
+            RAISE EXCEPTION 'Amount (%) must be a positive finite number', transfer_request.amount;
+        END IF;
+
+        IF transfer_request.from_account_id IS NULL OR transfer_request.to_account_id IS NULL THEN
+            RAISE EXCEPTION 'Account ids (from=%, to=%) must not be null',
+                transfer_request.from_account_id, transfer_request.to_account_id;
         END IF;
 
         IF transfer_request.from_account_id = transfer_request.to_account_id THEN
@@ -244,6 +254,10 @@ BEGIN
         WHERE pgledger_accounts.id = transfer_request.from_account_id
         RETURNING * INTO from_account;
 
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Account (id=%) does not exist', transfer_request.from_account_id;
+        END IF;
+
         -- Check balance constraints for the source account
         PERFORM pgledger_check_account_balance_constraints(from_account);
 
@@ -253,6 +267,10 @@ BEGIN
             updated_at = now()
         WHERE pgledger_accounts.id = transfer_request.to_account_id
         RETURNING * INTO to_account;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Account (id=%) does not exist', transfer_request.to_account_id;
+        END IF;
 
         -- Check balance constraints for the destination account
         PERFORM pgledger_check_account_balance_constraints(to_account);
