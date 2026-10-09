@@ -25,8 +25,8 @@ SELECT * FROM pgledger_accounts_view
 WHERE name LIKE 'user2.%';
                id                |   name    | currency | balance | version | allow_negative_balance | allow_positive_balance | metadata |          created_at           |          updated_at           
 ---------------------------------+-----------+----------+---------+---------+------------------------+------------------------+----------+-------------------------------+-------------------------------
- pgla_01M49GVEYRF76T717GJ9Y138C7 | user2.usd | USD      |       0 |       0 | t                      | t                      |          | 2026-10-06 21:10:29.591429+00 | 2026-10-06 21:10:29.591429+00
- pgla_01M49GVEYSEZRAJJBVJ9BBEDBY | user2.eur | EUR      |       0 |       0 | t                      | t                      |          | 2026-10-06 21:10:29.593421+00 | 2026-10-06 21:10:29.593421+00
+ pgla_01M4EZD9KVFB4RPQW5GMGGZ0MS | user2.usd | USD      |       0 |       0 | t                      | t                      |          | 2026-10-09 00:01:06.170338+00 | 2026-10-09 00:01:06.170338+00
+ pgla_01M4EZD9KWFFYS0RQFNSG4XBHY | user2.eur | EUR      |       0 |       0 | t                      | t                      |          | 2026-10-09 00:01:06.172677+00 | 2026-10-09 00:01:06.172677+00
 (2 rows)
 
 -- And you can even use PostgreSQL's ltree functionality for querying
@@ -37,8 +37,8 @@ SELECT * FROM pgledger_accounts_view
 WHERE name::LTREE <@ 'user2';
                id                |   name    | currency | balance | version | allow_negative_balance | allow_positive_balance | metadata |          created_at           |          updated_at           
 ---------------------------------+-----------+----------+---------+---------+------------------------+------------------------+----------+-------------------------------+-------------------------------
- pgla_01M49GVEYRF76T717GJ9Y138C7 | user2.usd | USD      |       0 |       0 | t                      | t                      |          | 2026-10-06 21:10:29.591429+00 | 2026-10-06 21:10:29.591429+00
- pgla_01M49GVEYSEZRAJJBVJ9BBEDBY | user2.eur | EUR      |       0 |       0 | t                      | t                      |          | 2026-10-06 21:10:29.593421+00 | 2026-10-06 21:10:29.593421+00
+ pgla_01M4EZD9KVFB4RPQW5GMGGZ0MS | user2.usd | USD      |       0 |       0 | t                      | t                      |          | 2026-10-09 00:01:06.170338+00 | 2026-10-09 00:01:06.170338+00
+ pgla_01M4EZD9KWFFYS0RQFNSG4XBHY | user2.eur | EUR      |       0 |       0 | t                      | t                      |          | 2026-10-09 00:01:06.172677+00 | 2026-10-09 00:01:06.172677+00
 (2 rows)
 
 -- Now, we can see that pgledger prevents transfers between accounts of different currencies:
@@ -46,7 +46,7 @@ SELECT * FROM pgledger_create_transfer(:'user2_usd_id', :'user2_eur_id', 10.00);
 -- Instead, we need to create liquidity accounts per currency and use those for the transfers:
 SELECT id FROM pgledger_create_account('liquidity.usd', 'USD') \gset liquidity_usd_
 ERROR:  Cannot transfer between different currencies (USD and EUR)
-CONTEXT:  PL/pgSQL function pgledger_create_transfers(transfer_request[],timestamp with time zone,jsonb) line 64 at RAISE
+CONTEXT:  PL/pgSQL function pgledger_create_transfers(transfer_request[],timestamp with time zone,jsonb) line 82 at RAISE
 SQL statement "SELECT * FROM pgledger_create_transfers(
         transfer_requests => array[(from_account_id, to_account_id, amount)::TRANSFER_REQUEST],
         event_at => event_at,
@@ -63,8 +63,8 @@ SELECT * FROM pgledger_create_transfers(
 );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata 
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
- pglt_01M49GVEZ2FNHAZ8CTDQTM8JJG | pgla_01M49GVEYRF76T717GJ9Y138C7 | pgla_01M49GVEZ1FCH87MFGTKFN0TPG |  10.00 | 2026-10-06 21:10:29.602536+00 | 2026-10-06 21:10:29.602536+00 | 
- pglt_01M49GVEZ3ENNAZ9716CAWERZC | pgla_01M49GVEZ2EFFBS4Y8A8063FTR | pgla_01M49GVEYSEZRAJJBVJ9BBEDBY |   9.26 | 2026-10-06 21:10:29.602536+00 | 2026-10-06 21:10:29.602536+00 | 
+ pglt_01M4EZD9M7ETFTCTEDD72PWX3R | pgla_01M4EZD9KVFB4RPQW5GMGGZ0MS | pgla_01M4EZD9M6E6T9081DYWS0Y94B |  10.00 | 2026-10-09 00:01:06.183161+00 | 2026-10-09 00:01:06.183161+00 | 
+ pglt_01M4EZD9M7FR3SGKGVFMPGGGA4 | pgla_01M4EZD9M6FPAVB80ASRJHS3XM | pgla_01M4EZD9KWFFYS0RQFNSG4XBHY |   9.26 | 2026-10-09 00:01:06.183161+00 | 2026-10-09 00:01:06.183161+00 | 
 (2 rows)
 
 -- Note that this used the plural `pgledger_create_transfers` instead of the
@@ -84,8 +84,8 @@ SELECT * FROM pgledger_create_transfers(
 );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |          event_at          |          metadata          
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+----------------------------+----------------------------
- pglt_01M49GVEZ3FRVBKVRP4JSK6STA | pgla_01M49GVEYRF76T717GJ9Y138C7 | pgla_01M49GVEZ1FCH87MFGTKFN0TPG |  10.00 | 2026-10-06 21:10:29.603716+00 | 2025-07-21 12:45:54.123+00 | {"external_id": "ext_123"}
- pglt_01M49GVEZ4E5R83J1HXZ57CA38 | pgla_01M49GVEZ2EFFBS4Y8A8063FTR | pgla_01M49GVEYSEZRAJJBVJ9BBEDBY |   9.26 | 2026-10-06 21:10:29.603716+00 | 2025-07-21 12:45:54.123+00 | {"external_id": "ext_123"}
+ pglt_01M4EZD9M8ERVA48XPFMCAZ11N | pgla_01M4EZD9KVFB4RPQW5GMGGZ0MS | pgla_01M4EZD9M6E6T9081DYWS0Y94B |  10.00 | 2026-10-09 00:01:06.184243+00 | 2025-07-21 12:45:54.123+00 | {"external_id": "ext_123"}
+ pglt_01M4EZD9M8F4D9NCYC0N182W02 | pgla_01M4EZD9M6FPAVB80ASRJHS3XM | pgla_01M4EZD9KWFFYS0RQFNSG4XBHY |   9.26 | 2026-10-09 00:01:06.184243+00 | 2025-07-21 12:45:54.123+00 | {"external_id": "ext_123"}
 (2 rows)
 
 -- Here is what the transfers look like holistically:
@@ -102,9 +102,9 @@ LEFT JOIN pgledger_accounts_view acc_to ON t.to_account_id = acc_to.id
 WHERE acc_from.name LIKE 'user2.%' OR acc_from.name LIKE 'liquidity.%';
                id                |          created_at           |           event_at            |   acc_from    |    acc_to     | amount 
 ---------------------------------+-------------------------------+-------------------------------+---------------+---------------+--------
- pglt_01M49GVEZ2FNHAZ8CTDQTM8JJG | 2026-10-06 21:10:29.602536+00 | 2026-10-06 21:10:29.602536+00 | user2.usd     | liquidity.usd |  10.00
- pglt_01M49GVEZ3ENNAZ9716CAWERZC | 2026-10-06 21:10:29.602536+00 | 2026-10-06 21:10:29.602536+00 | liquidity.eur | user2.eur     |   9.26
- pglt_01M49GVEZ3FRVBKVRP4JSK6STA | 2026-10-06 21:10:29.603716+00 | 2025-07-21 12:45:54.123+00    | user2.usd     | liquidity.usd |  10.00
- pglt_01M49GVEZ4E5R83J1HXZ57CA38 | 2026-10-06 21:10:29.603716+00 | 2025-07-21 12:45:54.123+00    | liquidity.eur | user2.eur     |   9.26
+ pglt_01M4EZD9M7ETFTCTEDD72PWX3R | 2026-10-09 00:01:06.183161+00 | 2026-10-09 00:01:06.183161+00 | user2.usd     | liquidity.usd |  10.00
+ pglt_01M4EZD9M7FR3SGKGVFMPGGGA4 | 2026-10-09 00:01:06.183161+00 | 2026-10-09 00:01:06.183161+00 | liquidity.eur | user2.eur     |   9.26
+ pglt_01M4EZD9M8ERVA48XPFMCAZ11N | 2026-10-09 00:01:06.184243+00 | 2025-07-21 12:45:54.123+00    | user2.usd     | liquidity.usd |  10.00
+ pglt_01M4EZD9M8F4D9NCYC0N182W02 | 2026-10-09 00:01:06.184243+00 | 2025-07-21 12:45:54.123+00    | liquidity.eur | user2.eur     |   9.26
 (4 rows)
 
