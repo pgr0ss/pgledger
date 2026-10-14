@@ -175,7 +175,7 @@ func (m *LedgerMachine) InvariantStructure(tc hegel.TestCase) {
 	m.scope.assertInvariants(tc)
 }
 
-// Findings records concurrent-machine failures because hegel v0.9.13 reports
+// Findings records concurrent-machine failures because hegel v0.9.23 reports
 // success when a run ends with RUN_STATUS_FAILED_NONDETERMINISTIC
 // (runWithContext returns io.Copy's nil error), which concurrent runs are
 // likeliest to hit.
@@ -284,12 +284,7 @@ func (m *ConcurrentLedger) RuleTransfer(tc hegel.TestCase) {
 // RuleTransferRing visits accounts in drawn order, so overlapping concurrent
 // rings deadlock unless pgledger_create_transfers locks in sorted order.
 func (m *ConcurrentLedger) RuleTransferRing(tc hegel.TestCase) {
-	ring := hegel.Draw(tc, hegel.Lists(m.accounts.ValuesReusable()).MinSize(3).MaxSize(5))
-	seen := make(map[string]bool, len(ring))
-	for _, id := range ring {
-		tc.Assume(!seen[id])
-		seen[id] = true
-	}
+	ring := hegel.Draw(tc, hegel.UniqueLists(m.accounts.ValuesReusable()).MinSize(3).MaxSize(5))
 
 	rows := make([][3]any, len(ring))
 	for i, from := range ring {
