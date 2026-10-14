@@ -5,7 +5,7 @@ go 1.27.1
 require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/stretchr/testify v1.12.1
-	hegel.dev/go/hegel v0.9.13
+	hegel.dev/go/hegel v0.9.14
 )
 
 require (
