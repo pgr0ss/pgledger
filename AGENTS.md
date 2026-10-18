@@ -63,6 +63,8 @@ pgledger_create_transfers(
 - Balance constraints are checked after each update — set both `allow_negative_balance=false` and `allow_positive_balance=false` to freeze an account
 - `pgledger_create_transfers` applies requests in array order and checks each account after every request, so batch order is significant — the same multiset can succeed in one order and fail in another
 - Account `version` increments on every transfer touching that account
+- A top-level, non-null `metadata.idempotency_key` makes a call idempotent: a call with a claimed key returns the claiming call's transfers when it matches (requests as a multiset with numeric amounts, same `event_at` or both defaulted, same `metadata`) and is rejected with `Idempotency key (…) was already used with a different request` otherwise. The key must be a JSON string; any other non-null value is rejected with `Idempotency key (…) must be a JSON string`. The key check runs before request validation and account locking
+- Only an accepted, non-empty call claims a key. Same-key calls serialize on `pg_advisory_xact_lock(hashtextextended(key, 0))`; lookups use a partial expression index on `metadata ->> 'idempotency_key'`. The guarantee relies on `READ COMMITTED` taking a fresh snapshot after the lock; a `REPEATABLE READ`/`SERIALIZABLE` snapshot that predates a concurrent claim misses it (a mismatched request on other accounts claims the key twice unless both transactions are `SERIALIZABLE`)
 
 ## Implementation
 

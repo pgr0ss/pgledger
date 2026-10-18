@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgr0ss/pgledger/testhelpers"
@@ -60,13 +64,69 @@ func assertParity(tc hegel.TestCase, s *scope, reqs []request, before snapshot, 
 	}
 }
 
+// keyedCalls remembers, across one test's calls, the transfers each claimed
+// key returned and the keyed calls made so far, for replays and mutations.
+type keyedCalls struct {
+	claimed map[string][]testhelpers.Transfer
+	made    []call
+}
+
+func newKeyedCalls() *keyedCalls {
+	return &keyedCalls{claimed: map[string][]testhelpers.Transfer{}}
+}
+
+// assert runs c against pgledger and the model, and returns the model's
+// prediction, which assertParity has held pgledger to. A replay must return
+// the claiming call's transfers unchanged and leave the ledger untouched.
+func (k *keyedCalls) assert(tc hegel.TestCase, s *scope, m *model, c call) (replayed bool, want string) {
+	before := s.snapshot(tc)
+	replayed, want = m.applyCall(c)
+	returned, err := s.createCall(c, hegel.Draw(tc, hegel.Booleans()))
+	assertParity(tc, s, c.Reqs, before, want, err)
+	if c.IdempotencyKey == nil {
+		return replayed, want
+	}
+	k.made = append(k.made, c)
+
+	switch {
+	case err != nil || want != "":
+	case replayed:
+		if got, claimed := transferRows(returned), transferRows(k.claimed[*c.IdempotencyKey]); !slices.Equal(got, claimed) {
+			tc.Errorf("replay of %s with key %s returned %v, but the claiming call returned %v",
+				describe(c.Reqs), *c.IdempotencyKey, got, claimed)
+		}
+		if diff := before.diff(s.snapshot(tc)); diff != "" {
+			tc.Errorf("replay of %s with key %s mutated the ledger: %s", describe(c.Reqs), *c.IdempotencyKey, diff)
+		}
+	case len(c.Reqs) > 0:
+		k.claimed[*c.IdempotencyKey] = returned
+	}
+	return replayed, want
+}
+
+func transferRows(transfers []testhelpers.Transfer) []string {
+	rows := make([]string, 0, len(transfers))
+	for _, t := range transfers {
+		metadata := "<null>"
+		if t.Metadata != nil {
+			metadata = *t.Metadata
+		}
+		rows = append(rows, fmt.Sprintf("%s %s->%s %s created %s event %s %s",
+			t.ID, t.FromAccountID, t.ToAccountID, t.Amount,
+			t.CreatedAt.UTC().Format(time.RFC3339Nano), t.EventAt.UTC().Format(time.RFC3339Nano), metadata))
+	}
+	return rows
+}
+
 // LedgerMachine is sequential: accept/reject parity is only predictable when
 // the model sees operations in the order pgledger applied them.
 type LedgerMachine struct {
-	scope    *scope
-	model    *model
-	currency string
-	accepted int
+	scope           *scope
+	model           *model
+	currency        string
+	accepted        int
+	idempotencyKeys []string
+	keyed           *keyedCalls
 }
 
 // DefaultSpecs has one account per constraint flag, all in one currency: with
@@ -93,9 +153,11 @@ func NewLedgerMachine(tc hegel.TestCase, ctx context.Context, conn *pgxpool.Pool
 	}
 	s := newScope(tc, ctx, conn, specs)
 	return &LedgerMachine{
-		scope:    s,
-		model:    s.newModel(),
-		currency: currency,
+		scope:           s,
+		model:           s.newModel(),
+		currency:        currency,
+		idempotencyKeys: s.idempotencyKeys(3),
+		keyed:           newKeyedCalls(),
 	}
 }
 
@@ -153,6 +215,14 @@ func (m *LedgerMachine) RuleTransfersVariadicAPI(tc hegel.TestCase) {
 	assertParity(tc, m.scope, reqs, before, reason, err)
 }
 
+func (m *LedgerMachine) RuleIdempotentTransfers(tc hegel.TestCase) {
+	tc.Assume(m.scope.size() >= 2)
+	c := hegel.Draw(tc, nextCallGen(m.scope.size(), m.idempotencyKeys, m.keyed.made))
+	if replayed, want := m.keyed.assert(tc, m.scope, m.model, c); !replayed && want == "" {
+		m.accepted += len(c.Reqs)
+	}
+}
+
 func (m *LedgerMachine) RuleEmptyBatch(tc hegel.TestCase) {
 	before := m.scope.snapshot(tc)
 	returned, err := m.scope.createTransfers(nil, nil, nil)
@@ -208,30 +278,43 @@ func (w *watched) Errorf(format string, args ...any) {
 
 // ConcurrentLedger has no oracle, since accept/reject depends on the
 // interleaving. Unconstrained transfers must never fail (no deadlocks),
-// constrained ones may fail only with their own constraint's message.
+// constrained ones may fail only with their own constraint's message, and
+// keyed ones only as an idempotency mismatch.
 type ConcurrentLedger struct {
 	scope             *scope
 	accounts          *hegel.Pool[string]
 	negativeForbidden *hegel.Pool[string]
 	positiveForbidden *hegel.Pool[string]
 	found             *Findings
+	idempotencyKeys   []string
+
+	mu sync.Mutex
+	// intents is the first request drawn for each key, which later calls
+	// mostly resend.
+	intents map[string][3]string
+	// claimed is the transfer id each key's accepted calls returned.
+	claimed map[string]string
 }
 
 func NewConcurrentLedger(tc hegel.TestCase, ctx context.Context, conn *pgxpool.Pool, found *Findings) *ConcurrentLedger {
 	tc = found.watch(tc)
+	s := newScope(tc, ctx, conn, nil)
 	return &ConcurrentLedger{
-		scope:             newScope(tc, ctx, conn, nil),
+		scope:             s,
 		accounts:          hegel.NewPool[string](tc),
 		negativeForbidden: hegel.NewPool[string](tc),
 		positiveForbidden: hegel.NewPool[string](tc),
 		found:             found,
+		idempotencyKeys:   s.idempotencyKeys(3),
+		intents:           map[string][3]string{},
+		claimed:           map[string]string{},
 	}
 }
 
 func ConcurrentLedgerOptions(maxConcurrency int) []hegel.StateMachineOption {
 	return []hegel.StateMachineOption{
 		hegel.WithBoundedConcurrency(maxConcurrency),
-		hegel.WithAlwaysCheckInvariants("InvariantStructure"),
+		hegel.WithAlwaysCheckInvariants("InvariantStructure", "InvariantIdempotencyKeys"),
 		hegel.WithRuleGroup("ledger",
 			"RuleOpenAccount",
 			"RuleOpenNegativeForbiddenAccount",
@@ -242,6 +325,7 @@ func ConcurrentLedgerOptions(maxConcurrency int) []hegel.StateMachineOption {
 			"RuleTransferFromNegativeForbiddenAccount",
 			"RuleTransferToPositiveForbiddenAccount",
 			"RuleTransferFromPositiveForbiddenAccount",
+			"RuleIdempotentTransfer",
 		),
 	}
 }
@@ -295,6 +379,50 @@ func (m *ConcurrentLedger) RuleTransferRing(tc hegel.TestCase) {
 	}
 }
 
+// RuleIdempotentTransfer mostly resends the first request drawn for its key,
+// so concurrent calls race to claim the key with matching and mismatching
+// requests. Whichever claims it, every accepted call must return its one
+// transfer.
+func (m *ConcurrentLedger) RuleIdempotentTransfer(tc hegel.TestCase) {
+	idempotencyKey := hegel.Draw(tc, hegel.SampledFrom(m.idempotencyKeys))
+	from, to, amount := m.drawTransfer(tc, m.accounts, m.accounts)
+	resend := hegel.Draw(tc, hegel.WeightedBooleans(0.75))
+
+	m.mu.Lock()
+	if intent, ok := m.intents[idempotencyKey]; !ok {
+		m.intents[idempotencyKey] = [3]string{from, to, amount}
+	} else if resend {
+		from, to, amount = intent[0], intent[1], intent[2]
+	}
+	m.mu.Unlock()
+
+	watched := m.found.watch(tc)
+	returned, err := m.scope.query(`select * from pgledger_create_transfer($1, $2, $3, metadata => $4::jsonb)`,
+		from, to, amount, call{IdempotencyKey: &idempotencyKey}.metadataJSON())
+	if err != nil {
+		requireRejection(watched, err, idempotencyMismatch(idempotencyKey))
+		return
+	}
+	if len(returned) != 1 {
+		watched.Errorf("key %s returned %d transfers, want 1", idempotencyKey, len(returned))
+		return
+	}
+	got := returned[0]
+	if got.FromAccountID != from || got.ToAccountID != to ||
+		mustRat(watched, "returned amount", got.Amount).Cmp(mustRat(watched, "requested amount", amount)) != 0 {
+		watched.Errorf("key %s returned %s -> %s of %s for a request of %s -> %s of %s",
+			idempotencyKey, got.FromAccountID, got.ToAccountID, got.Amount, from, to, amount)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if prior, ok := m.claimed[idempotencyKey]; !ok {
+		m.claimed[idempotencyKey] = got.ID
+	} else if prior != got.ID {
+		watched.Errorf("key %s returned transfer %s, but an earlier call with it returned %s", idempotencyKey, got.ID, prior)
+	}
+}
+
 func (m *ConcurrentLedger) transferMustSucceed(tc hegel.TestCase, fromPool, toPool *hegel.Pool[string]) {
 	from, to, amount := m.drawTransfer(tc, fromPool, toPool)
 	if _, err := testhelpers.CreateTransferReturnErr(m.scope.ctx, m.scope.conn, from, to, amount); err != nil {
@@ -320,4 +448,30 @@ func (m *ConcurrentLedger) drawTransfer(tc hegel.TestCase, fromPool, toPool *heg
 // conservation must hold.
 func (m *ConcurrentLedger) InvariantStructure(tc hegel.TestCase) {
 	m.scope.assertInvariants(m.found.watch(tc))
+}
+
+// InvariantIdempotencyKeys checks that each claimed key labels exactly the one
+// transfer its accepted calls returned.
+func (m *ConcurrentLedger) InvariantIdempotencyKeys(tc hegel.TestCase) {
+	tc = m.found.watch(tc)
+	m.mu.Lock()
+	claimed := maps.Clone(m.claimed)
+	m.mu.Unlock()
+
+	for _, idempotencyKey := range slices.Sorted(maps.Keys(claimed)) {
+		rows, err := m.scope.conn.Query(m.scope.ctx,
+			`select id from pgledger_transfers_view where metadata ->> 'idempotency_key' = $1 order by id`, idempotencyKey)
+		if err != nil {
+			tc.Errorf("transfers with key %s: %v", idempotencyKey, err)
+			return
+		}
+		ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			tc.Errorf("transfers with key %s: %v", idempotencyKey, err)
+			return
+		}
+		if !slices.Equal(ids, []string{claimed[idempotencyKey]}) {
+			tc.Errorf("key %s labels transfers %v, but its accepted calls returned %s", idempotencyKey, ids, claimed[idempotencyKey])
+		}
+	}
 }

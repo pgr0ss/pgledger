@@ -15,13 +15,15 @@ import (
 )
 
 // scope is the accounts one test case owns. The suite shares a database with
-// parallel tests, so every assertion must be restricted to these ids.
+// parallel tests, so every assertion must be restricted to these ids, and
+// idempotency keys, which are global, to idempotencyKeyPrefix.
 type scope struct {
-	conn     *pgxpool.Pool
-	ctx      context.Context
-	mu       sync.Mutex
-	accounts []scopeAccount
-	created  int
+	conn                 *pgxpool.Pool
+	ctx                  context.Context
+	mu                   sync.Mutex
+	accounts             []scopeAccount
+	created              int
+	idempotencyKeyPrefix string
 }
 
 type scopeAccount struct {
@@ -31,11 +33,19 @@ type scopeAccount struct {
 }
 
 func newScope(tc hegel.TestCase, ctx context.Context, conn *pgxpool.Pool, specs []accountSpec) *scope {
-	s := &scope{conn: conn, ctx: ctx}
+	s := &scope{conn: conn, ctx: ctx, idempotencyKeyPrefix: fmt.Sprintf("prop-key-%d-", rand.Int64())}
 	for _, spec := range specs {
 		s.addAccount(tc, spec)
 	}
 	return s
+}
+
+func (s *scope) idempotencyKeys(n int) []string {
+	idempotencyKeys := make([]string, n)
+	for i := range idempotencyKeys {
+		idempotencyKeys[i] = fmt.Sprintf("%s%d", s.idempotencyKeyPrefix, i)
+	}
+	return idempotencyKeys
 }
 
 func (s *scope) addAccount(tc hegel.TestCase, spec accountSpec) scopeAccount {
@@ -158,6 +168,15 @@ func (s *scope) createTransfer(req request, eventAt *time.Time, metadata *string
 		accountArg(ids, req.FromIdx), accountArg(ids, req.ToIdx), amountArg(req.Amount), eventAt, metadata)
 }
 
+// createCall sends a one-request call through pgledger_create_transfer when
+// single is set.
+func (s *scope) createCall(c call, single bool) ([]testhelpers.Transfer, error) {
+	if single && len(c.Reqs) == 1 {
+		return s.createTransfer(c.Reqs[0], c.EventAt, c.metadataJSON())
+	}
+	return s.createTransfers(c.Reqs, c.EventAt, c.metadataJSON())
+}
+
 func (s *scope) query(sql string, args ...any) ([]testhelpers.Transfer, error) {
 	rows, err := s.conn.Query(s.ctx, sql, args...)
 	if err != nil {
@@ -258,6 +277,21 @@ func (s *scope) assertInvariants(tc hegel.TestCase) {
 		join pgledger_accounts f on f.id = t.from_account_id
 		join pgledger_accounts d on d.id = t.to_account_id
 		where t.from_account_id = any($1) and f.currency != d.currency`, ids)
+
+	// One call's transfers share created_at (now() is the transaction start),
+	// event_at and metadata, so a key spanning more than one combination was
+	// claimed twice.
+	s.reportViolations(tc, "idempotency key is held by more than one call", `
+		select format('idempotency key %s is held by %s calls: %s',
+			idempotency_key, count(distinct (created_at, event_at, metadata)), array_agg(id order by id))
+		from (
+			select id, metadata ->> 'idempotency_key' as idempotency_key, created_at, event_at, metadata
+			from pgledger_transfers
+			where from_account_id = any($1)
+		) t
+		where idempotency_key is not null
+		group by idempotency_key
+		having count(distinct (created_at, event_at, metadata)) > 1`, ids)
 
 	// Order by account_version, not id: below PostgreSQL 18 entry ids come from
 	// a uuidv7 fallback that is not monotonic within a microsecond.

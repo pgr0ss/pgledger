@@ -4,11 +4,14 @@
 package propertytest
 
 import (
+	"encoding/json"
+	"maps"
 	"math"
 	"math/big"
 	"os"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"hegel.dev/go/hegel"
@@ -255,4 +258,157 @@ func (r request) isHostile() bool {
 
 func batchGen(n int, amounts hegel.Generator[string]) hegel.Generator[[]request] {
 	return hegel.Lists(requestGen(n, amounts)).MinSize(1).MaxSize(5)
+}
+
+// call is one pgledger_create_transfers invocation. IdempotencyKey, when set,
+// is written into the metadata as the top-level idempotency_key.
+type call struct {
+	Reqs           []request
+	EventAt        *time.Time
+	Metadata       map[string]any
+	IdempotencyKey *string
+}
+
+func (c call) metadataJSON() *string {
+	if c.IdempotencyKey == nil && c.Metadata == nil {
+		return nil
+	}
+	object := maps.Clone(c.Metadata)
+	if object == nil {
+		object = map[string]any{}
+	}
+	if c.IdempotencyKey != nil {
+		object["idempotency_key"] = *c.IdempotencyKey
+	}
+	// The values are JSON-native, so Marshal cannot fail.
+	encoded, _ := json.Marshal(object)
+	return new(string(encoded))
+}
+
+// callGen draws keys from a small set so later calls collide with earlier
+// ones. metadataGen keys are at most 6 characters, so they never spell
+// idempotency_key.
+func callGen(n int, idempotencyKeys hegel.Generator[*string]) hegel.Generator[call] {
+	return hegel.Composite(func(tc hegel.TestCase) call {
+		c := call{
+			Reqs:           hegel.Draw(tc, batchGen(n, amountGen())),
+			EventAt:        hegel.Draw(tc, hegel.Optional(eventAtGen())),
+			IdempotencyKey: hegel.Draw(tc, idempotencyKeys),
+		}
+		if hegel.Draw(tc, hegel.Booleans()) {
+			c.Metadata = hegel.Draw(tc, metadataGen())
+		}
+		return c
+	})
+}
+
+// respell writes amount at a larger scale: NUMERIC compares 10.5 and 10.50 as
+// equal but stores whichever it was given.
+func respell(amount string) string {
+	if strings.Contains(amount, ".") {
+		return amount + "0"
+	}
+	return amount + ".0"
+}
+
+// replayGen redraws prior as a retry would send it: the same requests,
+// possibly reordered and with amounts respelled.
+func replayGen(prior call) hegel.Generator[call] {
+	return hegel.Composite(func(tc hegel.TestCase) call {
+		replay := prior
+		replay.Reqs = slices.Clone(prior.Reqs)
+		for i := len(replay.Reqs) - 1; i > 0; i-- {
+			j := hegel.Draw(tc, hegel.Integers(0, i))
+			replay.Reqs[i], replay.Reqs[j] = replay.Reqs[j], replay.Reqs[i]
+		}
+		for i := range replay.Reqs {
+			// A hostile amount such as NaN has no other spelling.
+			if !isHostileAmount(replay.Reqs[i].Amount) && hegel.Draw(tc, hegel.Booleans()) {
+				replay.Reqs[i].Amount = respell(replay.Reqs[i].Amount)
+			}
+		}
+		return replay
+	})
+}
+
+type mutated struct {
+	Call call
+	Kind string
+}
+
+// wellFormedMutations keep every request acceptable on unconstrained accounts.
+var wellFormedMutations = []string{"amount", "account", "add request", "drop request", "event_at", "metadata"}
+
+var allMutations = append(slices.Clone(wellFormedMutations), "hostile request")
+
+// uniformKind uses a chain of WeightedBooleans rather than SampledFrom, which
+// draws an index with Integers and so inherits its per-test-case skew towards
+// the bounds (see hostileRequestGen).
+func uniformKind(tc hegel.TestCase, kinds []string) string {
+	for i, kind := range kinds[:len(kinds)-1] {
+		if hegel.Draw(tc, hegel.WeightedBooleans(1/float64(len(kinds)-i))) {
+			return kind
+		}
+	}
+	return kinds[len(kinds)-1]
+}
+
+// mutationGen changes one thing about prior while keeping its key. It may
+// redraw what was already there; the model decides whether the result still
+// matches.
+func mutationGen(prior call, n int, kinds []string) hegel.Generator[mutated] {
+	return hegel.Composite(func(tc hegel.TestCase) mutated {
+		m := mutated{Call: prior, Kind: uniformKind(tc, kinds)}
+		m.Call.Reqs = slices.Clone(prior.Reqs)
+		if len(m.Call.Reqs) == 0 && m.Kind != "event_at" && m.Kind != "metadata" {
+			m.Kind = "add request"
+		}
+		pick := func() int { return hegel.Draw(tc, hegel.Integers(0, len(m.Call.Reqs)-1)) }
+
+		switch m.Kind {
+		case "amount":
+			m.Call.Reqs[pick()].Amount = hegel.Draw(tc, amountGen())
+		case "account":
+			i := pick()
+			m.Call.Reqs[i] = hegel.Draw(tc, requestGen(n, hegel.Just(m.Call.Reqs[i].Amount)))
+		case "add request":
+			m.Call.Reqs = append(m.Call.Reqs, hegel.Draw(tc, requestGen(n, amountGen())))
+		case "drop request":
+			i := pick()
+			m.Call.Reqs = slices.Delete(m.Call.Reqs, i, i+1)
+		case "event_at":
+			switch {
+			case prior.EventAt == nil:
+				m.Call.EventAt = new(hegel.Draw(tc, eventAtGen()))
+			case hegel.Draw(tc, hegel.Booleans()):
+				m.Call.EventAt = nil
+			default:
+				shift := hegel.Draw(tc, hegel.Integers[int64](1, 1_000_000))
+				m.Call.EventAt = new(prior.EventAt.Add(time.Duration(shift) * time.Second))
+			}
+		case "metadata":
+			m.Call.Metadata = maps.Clone(prior.Metadata)
+			if m.Call.Metadata == nil {
+				m.Call.Metadata = map[string]any{}
+			}
+			m.Call.Metadata[hegel.Draw(tc, jsonTextGen())] = hegel.Draw(tc, jsonValueGen(1))
+		case "hostile request":
+			m.Call.Reqs[pick()] = hegel.Draw(tc, hostileRequestGen(n))
+		}
+		return m
+	})
+}
+
+// nextCallGen draws a fresh call, or a replay or mutation of an earlier one.
+func nextCallGen(n int, idempotencyKeys []string, prior []call) hegel.Generator[call] {
+	return hegel.Composite(func(tc hegel.TestCase) call {
+		if len(prior) == 0 || hegel.Draw(tc, hegel.WeightedBooleans(0.4)) {
+			return hegel.Draw(tc, callGen(n, hegel.Optional(hegel.SampledFrom(idempotencyKeys))))
+		}
+		earlier := hegel.Draw(tc, hegel.SampledFrom(prior))
+		if hegel.Draw(tc, hegel.Booleans()) {
+			return hegel.Draw(tc, replayGen(earlier))
+		}
+		return hegel.Draw(tc, mutationGen(earlier, n, allMutations)).Call
+	})
 }

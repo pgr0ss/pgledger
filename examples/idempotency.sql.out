@@ -1,0 +1,140 @@
+-- This file contains the sql queries plus their output, but we set the filetype to sql for better syntax highlighting
+-- vim: set filetype=sql:
+
+-- This is a fully working example script that shows how to use pgledger
+--
+-- Note that it uses `\gset` to store sql responses as variables. For example,
+-- `\gset foo_` creates variables for each column in the response like
+-- `foo_col1`, `foo_col2`, etc. These variables can then be used like
+-- `:'foo1_col`.
+-- The entire script can be passed to psql. If you are running postgres via the
+-- pgledger docker compose, you can run this script with:
+--
+--   cat idempotency.sql | \
+--     docker compose exec --no-TTY postgres psql -U pgledger --echo-all --no-psqlrc
+--
+-- Create a couple of accounts for testing
+SELECT id FROM pgledger_create_account('account1', 'USD') \gset account1_
+SELECT id FROM pgledger_create_account('account2', 'USD') \gset account2_
+-- Create an idempotency_key (normally, you'll do this in application code)
+SELECT uuidv4() AS idempotency_key \gset
+SELECT :'idempotency_key';
+               ?column?               
+--------------------------------------
+ 3f1922e6-62a2-410b-81d4-dd94318509ce
+(1 row)
+
+-- Create a transfer using the idempotency_key
+SELECT * FROM pgledger_create_transfer(
+    :'account1_id',
+    :'account2_id',
+    10.00,
+    metadata => jsonb_build_object('idempotency_key', :'idempotency_key')
+);
+               id                |         from_account_id         |          to_account_id          | amount |          created_at          |           event_at           |                          metadata                           
+---------------------------------+---------------------------------+---------------------------------+--------+------------------------------+------------------------------+-------------------------------------------------------------
+ pglt_01M5N6T4E6F008D4MR35BEKCVX | pgla_01M5N6T4E3FRAS03H02X5A2QA2 | pgla_01M5N6T4E4FHVBEFNBGXAHG2CS |  10.00 | 2026-10-23 20:21:35.30115+00 | 2026-10-23 20:21:35.30115+00 | {"idempotency_key": "3f1922e6-62a2-410b-81d4-dd94318509ce"}
+(1 row)
+
+-- Another transfer with the same key will return the existing transfer
+SELECT * FROM pgledger_create_transfer(
+    :'account1_id',
+    :'account2_id',
+    10.00,
+    metadata => jsonb_build_object('idempotency_key', :'idempotency_key')
+);
+               id                |         from_account_id         |          to_account_id          | amount |          created_at          |           event_at           |                          metadata                           
+---------------------------------+---------------------------------+---------------------------------+--------+------------------------------+------------------------------+-------------------------------------------------------------
+ pglt_01M5N6T4E6F008D4MR35BEKCVX | pgla_01M5N6T4E3FRAS03H02X5A2QA2 | pgla_01M5N6T4E4FHVBEFNBGXAHG2CS |  10.00 | 2026-10-23 20:21:35.30115+00 | 2026-10-23 20:21:35.30115+00 | {"idempotency_key": "3f1922e6-62a2-410b-81d4-dd94318509ce"}
+(1 row)
+
+-- But if the arguments are different, it will give an error:
+SELECT * FROM pgledger_create_transfer(
+    :'account1_id',
+    :'account2_id',
+    99.00,
+    metadata => jsonb_build_object('idempotency_key', :'idempotency_key')
+);
+-- We can see that there's exactly one transfer for this idempotency_key
+SELECT * FROM pgledger_transfers_view
+WHERE metadata ->> 'idempotency_key' = :'idempotency_key';
+ERROR:  Idempotency key (3f1922e6-62a2-410b-81d4-dd94318509ce) was already used with a different request
+CONTEXT:  PL/pgSQL function pgledger_create_transfers(transfer_request[],timestamp with time zone,jsonb) line 56 at RAISE
+SQL statement "SELECT * FROM pgledger_create_transfers(
+        transfer_requests => array[(from_account_id, to_account_id, amount)::TRANSFER_REQUEST],
+        event_at => event_at,
+        metadata => metadata
+    )"
+PL/pgSQL function pgledger_create_transfer(text,text,numeric,timestamp with time zone,jsonb) line 4 at RETURN QUERY
+               id                |         from_account_id         |          to_account_id          | amount |          created_at          |           event_at           |                          metadata                           
+---------------------------------+---------------------------------+---------------------------------+--------+------------------------------+------------------------------+-------------------------------------------------------------
+ pglt_01M5N6T4E6F008D4MR35BEKCVX | pgla_01M5N6T4E3FRAS03H02X5A2QA2 | pgla_01M5N6T4E4FHVBEFNBGXAHG2CS |  10.00 | 2026-10-23 20:21:35.30115+00 | 2026-10-23 20:21:35.30115+00 | {"idempotency_key": "3f1922e6-62a2-410b-81d4-dd94318509ce"}
+(1 row)
+
+-- Idempotency also works for batches of transfers:
+SELECT * FROM pgledger_create_transfers(
+    event_at => '2026-10-25T12:45:54.123Z',
+    metadata => jsonb_build_object('idempotency_key', :'idempotency_key' || '-2'),
+    transfer_requests => ARRAY[
+        (:'account1_id', :'account2_id', '1.00'),
+        (:'account1_id', :'account2_id', '2.00')
+    ]::TRANSFER_REQUEST[]
+);
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |          event_at          |                           metadata                            
+---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+----------------------------+---------------------------------------------------------------
+ pglt_01M5N6T4E7FZMT71SC5CXS1S78 | pgla_01M5N6T4E3FRAS03H02X5A2QA2 | pgla_01M5N6T4E4FHVBEFNBGXAHG2CS |   1.00 | 2026-10-23 20:21:35.303781+00 | 2026-10-25 12:45:54.123+00 | {"idempotency_key": "3f1922e6-62a2-410b-81d4-dd94318509ce-2"}
+ pglt_01M5N6T4E8EDNR3BA4R03Y8HCE | pgla_01M5N6T4E3FRAS03H02X5A2QA2 | pgla_01M5N6T4E4FHVBEFNBGXAHG2CS |   2.00 | 2026-10-23 20:21:35.303781+00 | 2026-10-25 12:45:54.123+00 | {"idempotency_key": "3f1922e6-62a2-410b-81d4-dd94318509ce-2"}
+(2 rows)
+
+SELECT * FROM pgledger_create_transfers(
+    event_at => '2026-10-25T12:45:54.123Z',
+    metadata => jsonb_build_object('idempotency_key', :'idempotency_key' || '-2'),
+    transfer_requests => ARRAY[
+        (:'account1_id', :'account2_id', '1.00'),
+        (:'account1_id', :'account2_id', '2.00')
+    ]::TRANSFER_REQUEST[]
+);
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |          event_at          |                           metadata                            
+---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+----------------------------+---------------------------------------------------------------
+ pglt_01M5N6T4E7FZMT71SC5CXS1S78 | pgla_01M5N6T4E3FRAS03H02X5A2QA2 | pgla_01M5N6T4E4FHVBEFNBGXAHG2CS |   1.00 | 2026-10-23 20:21:35.303781+00 | 2026-10-25 12:45:54.123+00 | {"idempotency_key": "3f1922e6-62a2-410b-81d4-dd94318509ce-2"}
+ pglt_01M5N6T4E8EDNR3BA4R03Y8HCE | pgla_01M5N6T4E3FRAS03H02X5A2QA2 | pgla_01M5N6T4E4FHVBEFNBGXAHG2CS |   2.00 | 2026-10-23 20:21:35.303781+00 | 2026-10-25 12:45:54.123+00 | {"idempotency_key": "3f1922e6-62a2-410b-81d4-dd94318509ce-2"}
+(2 rows)
+
+-- A missing or unique idempotency_key always creates a new transfer
+SELECT * FROM pgledger_create_transfer(
+    :'account1_id',
+    :'account2_id',
+    11.00,
+    metadata => '{}'
+);
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata 
+---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
+ pglt_01M5N6T4E9EB7A2RHK5AX4DJ7P | pgla_01M5N6T4E3FRAS03H02X5A2QA2 | pgla_01M5N6T4E4FHVBEFNBGXAHG2CS |  11.00 | 2026-10-23 20:21:35.304928+00 | 2026-10-23 20:21:35.304928+00 | {}
+(1 row)
+
+SELECT * FROM pgledger_create_transfer(
+    :'account1_id',
+    :'account2_id',
+    12.00,
+    metadata => jsonb_build_object('idempotency_key', uuidv4())
+);
+               id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            |                          metadata                           
+---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+-------------------------------------------------------------
+ pglt_01M5N6T4EAE1RTTJP5QZ48GZBD | pgla_01M5N6T4E3FRAS03H02X5A2QA2 | pgla_01M5N6T4E4FHVBEFNBGXAHG2CS |  12.00 | 2026-10-23 20:21:35.305847+00 | 2026-10-23 20:21:35.305847+00 | {"idempotency_key": "218312ad-b574-4066-adf7-4b0238d6377b"}
+(1 row)
+
+-- Idempotency keys need to be strings:
+SELECT * FROM pgledger_create_transfer(
+    :'account1_id',
+    :'account2_id',
+    10.00,
+    metadata => '{"idempotency_key": 123}'
+);
+ERROR:  Idempotency key (123) must be a JSON string
+CONTEXT:  PL/pgSQL function pgledger_create_transfers(transfer_request[],timestamp with time zone,jsonb) line 21 at RAISE
+SQL statement "SELECT * FROM pgledger_create_transfers(
+        transfer_requests => array[(from_account_id, to_account_id, amount)::TRANSFER_REQUEST],
+        event_at => event_at,
+        metadata => metadata
+    )"
+PL/pgSQL function pgledger_create_transfer(text,text,numeric,timestamp with time zone,jsonb) line 4 at RETURN QUERY
