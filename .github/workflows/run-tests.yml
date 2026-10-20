@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     strategy:
       matrix:
         postgres_version: ["15", "16", "17", "18"]
@@ -54,7 +54,7 @@ jobs:
   all-tests-passed:
     if: ${{ always() }}
     needs: test
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       # This approach is from: https://github.com/orgs/community/discussions/28864
       - name: Fail unless required checks pass
