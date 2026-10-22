@@ -1,5 +1,5 @@
 [tools]
-go = "1.27.2"                  # Matches the version in go.mod
+go = "1.27.3"                  # Matches the version in go.mod
 uv = "0.12.20"
 "github:casey/just" = "1.58.0"
 golangci-lint = "2.14.0"
