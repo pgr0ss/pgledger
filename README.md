@@ -221,6 +221,38 @@ and event_at < '2025-07-01'
 order by event_at;
 ```
 
+### Idempotency
+
+Transfers support idempotent calls by passing in an `idempotency_key` in the `metadata`. Reusing the same key will return the existing transfer rather than creating a new one:
+
+```sql
+-- First call creates a new transfer
+select id, metadata from pgledger_create_transfer($account_1_id, $account_2_id, 12.34, metadata => '{"idempotency_key": "a-random-uuid"}');
+
+               id                |               metadata
+---------------------------------+--------------------------------------
+ pglt_01M5N5ZGRREWESEAZR8GBF95Y6 | {"idempotency_key": "a-random-uuid"}
+(1 row)
+
+-- Second call reusing the idempotency_key returns the existing transfer
+select id, metadata from pgledger_create_transfer($account_1_id, $account_2_id, 12.34, metadata => '{"idempotency_key": "a-random-uuid"}');
+
+               id                |               metadata
+---------------------------------+--------------------------------------
+ pglt_01M5N5ZGRREWESEAZR8GBF95Y6 | {"idempotency_key": "a-random-uuid"}
+(1 row)
+```
+
+A retry with the same `idempotency_key` must use the same arguments, or an error will be returned:
+
+```sql
+select id, metadata from pgledger_create_transfer($account_2_id, $account_1_id, 43.21, metadata => '{"idempotency_key": "a-random-uuid"}');
+
+ERROR:  Idempotency key (a-random-uuid) was already used with a different request
+```
+
+For more examples, see: [examples/idempotency.sql.out](examples/idempotency.sql.out)
+
 ### Currencies
 
 Each account is single currency. If you want to maintain balances in multiple currencies, use multiple accounts.
@@ -310,6 +342,8 @@ Transfers/second: 7558.9
 Milliseconds/transfer: 2.6
 Bytes/transfer: 743
 ```
+
+Add `--idempotency-keys` to send a unique `idempotency_key` with every transfer, which measures the cost of [idempotency](#idempotency).
 
 ## Development
 

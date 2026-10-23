@@ -67,6 +67,11 @@ CREATE INDEX ON pgledger_transfers (from_account_id);
 CREATE INDEX ON pgledger_transfers (to_account_id);
 CREATE INDEX ON pgledger_transfers (event_at);
 
+-- Looks up the transfers created with an idempotency key. Partial, since most
+-- transfers have no key.
+CREATE INDEX ON pgledger_transfers ((metadata ->> 'idempotency_key'))
+WHERE (metadata ->> 'idempotency_key') IS NOT NULL;
+
 CREATE TABLE pgledger_entries (
     id TEXT PRIMARY KEY DEFAULT pgledger_generate_id('pgle'),
     account_id TEXT NOT NULL REFERENCES pgledger_accounts (id),
@@ -206,9 +211,53 @@ DECLARE
     from_account_id TEXT;
     to_account_id TEXT;
     all_account_ids TEXT[] := '{}';
+    idempotency_key TEXT := metadata ->> 'idempotency_key';
+    claimed_requests TRANSFER_REQUEST[];
+    claimed_details_match BOOLEAN;
 BEGIN
     IF transfer_requests IS NULL THEN
         RAISE EXCEPTION 'Transfer requests must not be null';
+    END IF;
+
+    IF idempotency_key IS NOT NULL THEN
+        IF jsonb_typeof(metadata -> 'idempotency_key') != 'string' THEN
+            RAISE EXCEPTION 'Idempotency key (%) must be a JSON string', metadata -> 'idempotency_key';
+        END IF;
+
+        -- Serialize calls sharing a key until the transaction ends, so the
+        -- lookup below sees any transfers a previous holder committed.
+        PERFORM pg_advisory_xact_lock(hashtextextended(idempotency_key, 0));
+
+        -- Requests compare as a multiset, with amounts compared numerically
+        SELECT
+            array_agg(
+                (t.from_account_id, t.to_account_id, t.amount)::TRANSFER_REQUEST
+                ORDER BY t.from_account_id, t.to_account_id, t.amount
+            ),
+            bool_and(
+                t.metadata = pgledger_create_transfers.metadata
+                AND t.event_at = coalesce(pgledger_create_transfers.event_at, t.created_at)
+            )
+        INTO claimed_requests, claimed_details_match
+        FROM pgledger_transfers t
+        WHERE t.metadata ->> 'idempotency_key' = idempotency_key;
+
+        IF claimed_requests IS NOT NULL THEN
+            IF claimed_details_match AND claimed_requests = ARRAY(
+                SELECT (r.from_account_id, r.to_account_id, r.amount)::TRANSFER_REQUEST
+                FROM unnest(transfer_requests) r
+                ORDER BY r.from_account_id, r.to_account_id, r.amount
+            ) THEN
+                RETURN QUERY
+                SELECT *
+                FROM pgledger_transfers_view v
+                WHERE v.metadata ->> 'idempotency_key' = idempotency_key
+                ORDER BY v.id;
+                RETURN;
+            END IF;
+
+            RAISE EXCEPTION 'Idempotency key (%) was already used with a different request', idempotency_key;
+        END IF;
     END IF;
 
     -- Collect all unique account IDs and sort them to prevent deadlocks

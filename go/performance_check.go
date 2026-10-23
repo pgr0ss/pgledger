@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"uuid"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,18 +18,20 @@ import (
 )
 
 var (
-	numAccountsFlag = flag.Int("accounts", 10, "Number of accounts to create")
-	numWorkersFlag  = flag.Int("workers", 20, "Number of concurrent workers")
-	durationFlag    = flag.String("duration", "10s", "Duration to run the test (e.g., 30s, 1m, 5m)")
-	vacuumFlag      = flag.Bool("vacuum", true, "Vacuum the database before and after to get better size estimates")
+	numAccountsFlag     = flag.Int("accounts", 10, "Number of accounts to create")
+	numWorkersFlag      = flag.Int("workers", 20, "Number of concurrent workers")
+	durationFlag        = flag.String("duration", "10s", "Duration to run the test (e.g., 30s, 1m, 5m)")
+	vacuumFlag          = flag.Bool("vacuum", true, "Vacuum the database before and after to get better size estimates")
+	idempotencyKeysFlag = flag.Bool("idempotency-keys", false, "Send a unique idempotency key in each transfer's metadata")
 )
 
-func parseArgs() (accounts, workers int, duration time.Duration, vacuum bool) {
+func parseArgs() (accounts, workers int, duration time.Duration, vacuum, idempotencyKeys bool) {
 	flag.Parse()
 
 	accounts = *numAccountsFlag
 	workers = *numWorkersFlag
 	vacuum = *vacuumFlag
+	idempotencyKeys = *idempotencyKeysFlag
 
 	if accounts < 2 {
 		fmt.Fprintf(os.Stderr, "Need at least 2 accounts to perform transfers.\n")
@@ -45,7 +48,7 @@ func parseArgs() (accounts, workers int, duration time.Duration, vacuum bool) {
 }
 
 func main() {
-	numAccounts, numWorkers, runDuration, vacuum := parseArgs()
+	numAccounts, numWorkers, runDuration, vacuum, idempotencyKeys := parseArgs()
 
 	ctx := context.Background()
 	dbconn := Must1(pgxpool.New(ctx, dburl.URL()))
@@ -87,7 +90,12 @@ func main() {
 					from := accountIDS[perm[0]]
 					to := accountIDS[perm[1]]
 
-					createTransfer(runCtx, dbconn, from, to)
+					var metadata *string
+					if idempotencyKeys {
+						metadata = new(fmt.Sprintf(`{"idempotency_key": "%s"}`, uuid.NewV4().String()))
+					}
+
+					createTransfer(runCtx, dbconn, from, to, metadata)
 					completed := completedTransfers.Add(1)
 
 					if completed%10000 == 0 {
@@ -151,8 +159,8 @@ func createAccount(ctx context.Context, conn *pgxpool.Pool) string {
 	return Must1(pgx.CollectExactlyOneRow(rows, pgx.RowTo[string]))
 }
 
-func createTransfer(ctx context.Context, conn *pgxpool.Pool, fromAccountID, toAccountID string) {
-	rows, err := conn.Query(ctx, "select id from pgledger_create_transfer($1, $2, $3)", fromAccountID, toAccountID, rand.Uint32())
+func createTransfer(ctx context.Context, conn *pgxpool.Pool, fromAccountID, toAccountID string, metadata *string) {
+	rows, err := conn.Query(ctx, "select id from pgledger_create_transfer($1, $2, $3, metadata => $4)", fromAccountID, toAccountID, rand.Uint32(), metadata)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return

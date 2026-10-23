@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -322,9 +323,9 @@ func TestBatchOrderDoesNotChangeBalances(t *testing.T) {
 	})
 }
 
-// No idempotency key: a future dedupe feature must break this test rather than
-// land silently.
-func TestTransfersAreNotIdempotent(t *testing.T) {
+// The keyed pair deduplicates first, so the unkeyed pairs are not passing
+// merely because nothing ever deduplicates.
+func TestOnlyATopLevelIdempotencyKeyDeduplicates(t *testing.T) {
 	conn := testhelpers.SetupParallel(t)
 	ctx := t.Context()
 
@@ -335,30 +336,317 @@ func TestTransfersAreNotIdempotent(t *testing.T) {
 		amount := hegel.Draw(ht, amountGen())
 		req := request{FromIdx: 0, ToIdx: 1, Amount: amount}
 		eventAt := hegel.Draw(ht, eventAtGen())
-		metadata := `{"idempotency-key": "same"}`
+		idempotencyKey := s.idempotencyKeys(1)[0]
 
-		first, err := s.createTransfer(req, &eventAt, &metadata)
+		keyed := call{Reqs: []request{req}, EventAt: &eventAt, IdempotencyKey: &idempotencyKey}.metadataJSON()
+		first, err := s.createTransfer(req, &eventAt, keyed)
 		if err != nil {
-			ht.Errorf("first transfer of %s: %v", amount, err)
+			ht.Errorf("first transfer with key %s: %v", idempotencyKey, err)
 		}
-		second, err := s.createTransfer(req, &eventAt, &metadata)
+		second, err := s.createTransfer(req, &eventAt, keyed)
 		if err != nil {
-			ht.Errorf("repeated transfer of %s: %v", amount, err)
+			ht.Errorf("repeated transfer with key %s: %v", idempotencyKey, err)
 		}
-		if first[0].ID == second[0].ID {
-			ht.Errorf("both calls returned transfer %s", first[0].ID)
+		if len(first) != 1 || !slices.Equal(transferRows(first), transferRows(second)) {
+			ht.Errorf("repeating key %s returned %v, then %v", idempotencyKey, transferRows(first), transferRows(second))
 		}
 
-		want := new(big.Rat).Mul(mustRat(ht, "amount", amount), big.NewRat(2, 1))
+		// Lookalikes of a top-level key, including a JSON array that jsonb's ?
+		// operator would report as having the key.
+		lookalikes := []any{
+			map[string]any{"idempotency-key": idempotencyKey},
+			map[string]any{"Idempotency_Key": idempotencyKey},
+			map[string]any{"nested": map[string]any{"idempotency_key": idempotencyKey}},
+			map[string]any{"idempotency_key": nil},
+			[]any{"idempotency_key", idempotencyKey},
+			"idempotency_key",
+			hegel.Draw(ht, metadataGen()),
+		}
+		var unkeyed *string
+		if pick := hegel.Draw(ht, hegel.Integers(0, len(lookalikes))); pick < len(lookalikes) {
+			encoded, err := json.Marshal(lookalikes[pick])
+			if err != nil {
+				ht.Errorf("marshal metadata %v: %v", lookalikes[pick], err)
+			}
+			unkeyed = new(string(encoded))
+		}
+
+		a, err := s.createTransfer(req, &eventAt, unkeyed)
+		if err != nil {
+			ht.Errorf("first transfer with unkeyed metadata: %v", err)
+		}
+		b, err := s.createTransfer(req, &eventAt, unkeyed)
+		if err != nil {
+			ht.Errorf("repeated transfer with unkeyed metadata: %v", err)
+		}
+		if len(a) != 1 || len(b) != 1 || a[0].ID == b[0].ID {
+			ht.Errorf("repeating unkeyed metadata returned %v, then %v", transferRows(a), transferRows(b))
+		}
+
+		want := new(big.Rat).Mul(mustRat(ht, "amount", amount), big.NewRat(3, 1))
 		destination := testhelpers.GetAccount(ht, conn, s.accountIDs()[1])
 		if mustRat(ht, "destination balance", destination.Balance).Cmp(want) != 0 {
-			ht.Errorf("two transfers of %s left %s, want %s", amount, destination.Balance, ratString(want))
+			ht.Errorf("one keyed and two unkeyed transfers of %s left %s, want %s", amount, destination.Balance, ratString(want))
 		}
-		if destination.Version != 2 {
-			ht.Errorf("destination version is %d after two transfers, want 2", destination.Version)
+		if destination.Version != 3 {
+			ht.Errorf("destination version is %d after three transfers, want 3", destination.Version)
 		}
 		s.assertInvariants(ht)
 	})
+}
+
+// Replays reorder requests and respell amounts, which must still match and
+// must return the rows as first written.
+func TestIdempotentReplayReturnsOriginalTransfers(t *testing.T) {
+	conn := testhelpers.SetupParallel(t)
+	ctx := t.Context()
+
+	check(t, func(ht *T) {
+		specs := hegel.Draw(ht, sameCurrencySpecsGen(2, 4, false))
+		s := newScope(ht, ctx, conn, specs)
+		m := s.newModel()
+		keyed := newKeyedCalls()
+		idempotencyKey := s.idempotencyKeys(1)[0]
+
+		original := hegel.Draw(ht, callGen(len(specs), hegel.Just(&idempotencyKey)))
+		keyed.assert(ht, s, m, original)
+
+		for _, replay := range hegel.Draw(ht, hegel.Lists(replayGen(original)).MinSize(1).MaxSize(4)) {
+			if replayed, _ := keyed.assert(ht, s, m, replay); !replayed {
+				ht.Errorf("model did not treat %s as a replay of %s", describe(replay.Reqs), describe(original.Reqs))
+			}
+		}
+		s.assertMatchesModel(ht, m)
+		s.assertInvariants(ht)
+	})
+}
+
+// After a mismatch the key must still replay the original: the rejection
+// neither releases nor rebinds it.
+func TestIdempotencyKeyMismatchIsRejectedWithoutTrace(t *testing.T) {
+	conn := testhelpers.SetupParallel(t)
+	ctx := t.Context()
+
+	var mismatched coverage
+	kinds := map[string]*coverage{}
+	for _, kind := range allMutations {
+		kinds[kind] = &coverage{}
+	}
+	check(t, func(ht *T) {
+		specs := hegel.Draw(ht, sameCurrencySpecsGen(2, 4, false))
+		s := newScope(ht, ctx, conn, specs)
+		m := s.newModel()
+		keyed := newKeyedCalls()
+		idempotencyKey := s.idempotencyKeys(1)[0]
+
+		original := hegel.Draw(ht, callGen(len(specs), hegel.Just(&idempotencyKey)))
+		keyed.assert(ht, s, m, original)
+
+		mutation := hegel.Draw(ht, mutationGen(original, len(specs), allMutations))
+		ht.Note(fmt.Sprintf("%s mutation: %s", mutation.Kind, describe(mutation.Call.Reqs)))
+		for kind, c := range kinds {
+			c.record(kind == mutation.Kind)
+		}
+		_, want := keyed.assert(ht, s, m, mutation.Call)
+		mismatched.record(want == idempotencyMismatch(idempotencyKey))
+
+		if replayed, _ := keyed.assert(ht, s, m, original); !replayed {
+			ht.Errorf("model did not treat the original %s as a replay", describe(original.Reqs))
+		}
+		s.assertMatchesModel(ht, m)
+		s.assertInvariants(ht)
+	})
+
+	// Some mutations redraw what was there (an account pair on a two-account
+	// ledger, say) and still match. Over 12 runs of 100 cases, 89-98% of cases
+	// mismatched, and the rarest kinds (add request, hostile request) dipped to
+	// 1%.
+	mismatched.require(t, "mismatched the key", 0.6)
+	for kind, c := range kinds {
+		c.require(t, "drew a "+kind+" mutation", 0.01)
+	}
+}
+
+// Half the cases constrain balances, so the model also has to predict which
+// keyed calls are rejected before they can claim their key.
+func TestModelPredictsIdempotentOutcomes(t *testing.T) {
+	conn := testhelpers.SetupParallel(t)
+	ctx := t.Context()
+
+	var replays, mismatches coverage
+	check(t, func(ht *T) {
+		specs := hegel.Draw(ht, sameCurrencySpecsGen(2, 4, hegel.Draw(ht, hegel.Booleans())))
+		s := newScope(ht, ctx, conn, specs)
+		m := s.newModel()
+		keyed := newKeyedCalls()
+		idempotencyKeys := s.idempotencyKeys(2)
+
+		replayed, mismatched := false, false
+		for range hegel.Draw(ht, hegel.Integers(2, 8)) {
+			c := hegel.Draw(ht, nextCallGen(len(specs), idempotencyKeys, keyed.made))
+			replay, want := keyed.assert(ht, s, m, c)
+			s.assertMatchesModel(ht, m)
+
+			replayed = replayed || replay
+			mismatched = mismatched || (c.IdempotencyKey != nil && want == idempotencyMismatch(*c.IdempotencyKey))
+		}
+		replays.record(replayed)
+		mismatches.record(mismatched)
+		s.assertInvariants(ht)
+	})
+
+	// Over 12 runs of 100 cases both averaged 36% and dipped to 21%.
+	replays.require(t, "replayed a claimed key", 0.1)
+	mismatches.require(t, "mismatched a claimed key", 0.1)
+}
+
+// A call rejected for overdrawing account 0 leaves its key unclaimed, so once
+// account 0 is funded a retry claims the key, and later retries replay that
+// retry.
+func TestRejectedCallDoesNotClaimItsKey(t *testing.T) {
+	conn := testhelpers.SetupParallel(t)
+	ctx := t.Context()
+
+	check(t, func(ht *T) {
+		currency := hegel.Draw(ht, currencyGen())
+		s := newScope(ht, ctx, conn, []accountSpec{
+			{Currency: currency, AllowNeg: false, AllowPos: true},
+			{Currency: currency, AllowNeg: true, AllowPos: true},
+		})
+		m := s.newModel()
+		keyed := newKeyedCalls()
+		idempotencyKey := s.idempotencyKeys(1)[0]
+
+		original := hegel.Draw(ht, callGen(2, hegel.Just(&idempotencyKey)))
+		original.Reqs = append([]request{{FromIdx: 0, ToIdx: 1, Amount: hegel.Draw(ht, amountGen())}}, original.Reqs...)
+		if _, want := keyed.assert(ht, s, m, original); want == "" {
+			ht.Errorf("model accepted %s, which overdraws account 0", describe(original.Reqs))
+		}
+
+		outflow := new(big.Rat)
+		for _, r := range original.Reqs {
+			if r.FromIdx == 0 {
+				outflow.Add(outflow, mustRat(ht, "amount", r.Amount))
+			}
+		}
+		keyed.assert(ht, s, m, call{Reqs: []request{{FromIdx: 1, ToIdx: 0, Amount: ratString(outflow)}}})
+
+		if replayed, want := keyed.assert(ht, s, m, hegel.Draw(ht, replayGen(original))); replayed || want != "" {
+			ht.Errorf("model did not let the funded retry of %s claim key %s (replayed %v, %q)",
+				describe(original.Reqs), idempotencyKey, replayed, want)
+		}
+		if replayed, _ := keyed.assert(ht, s, m, original); !replayed {
+			ht.Errorf("model did not treat a second retry of %s as a replay", describe(original.Reqs))
+		}
+		s.assertMatchesModel(ht, m)
+		s.assertInvariants(ht)
+	})
+}
+
+// Every call races for one key. The first non-empty call to take the key's
+// lock claims it; the rest must replay it or be rejected as a mismatch, so the
+// ledger holds exactly one call's transfers.
+func TestConcurrentIdempotentCallsClaimTheKeyOnce(t *testing.T) {
+	conn := testhelpers.SetupParallel(t)
+	ctx := t.Context()
+
+	var contested coverage
+	check(t, func(ht *T) {
+		specs := hegel.Draw(ht, sameCurrencySpecsGen(2, 4, false))
+		s := newScope(ht, ctx, conn, specs)
+		m := s.newModel()
+		idempotencyKey := s.idempotencyKeys(1)[0]
+
+		base := hegel.Draw(ht, callGen(len(specs), hegel.Just(&idempotencyKey)))
+		calls := hegel.Draw(ht, hegel.Lists(hegel.OneOf(
+			replayGen(base),
+			hegel.Map(mutationGen(base, len(specs), wellFormedMutations), func(mut mutated) call { return mut.Call }),
+		)).MinSize(2).MaxSize(8))
+
+		type result struct {
+			transfers []testhelpers.Transfer
+			err       error
+		}
+		results := make([]result, len(calls))
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for i, c := range calls {
+			wg.Go(func() {
+				<-start
+				transfers, err := s.createCall(c, false)
+				results[i] = result{transfers: transfers, err: err}
+			})
+		}
+		close(start)
+		wg.Wait()
+
+		winner := -1
+		for i, r := range results {
+			if r.err == nil && len(calls[i].Reqs) > 0 {
+				winner = i
+				break
+			}
+		}
+		if winner < 0 {
+			ht.Errorf("no concurrent call claimed key %s: %v", idempotencyKey, results)
+			return
+		}
+		claimed := transferRows(results[winner].transfers)
+
+		mismatching := false
+		for i, c := range calls {
+			r := results[i]
+			switch {
+			case len(c.Reqs) == 0:
+				// An empty batch claims nothing, so it is accepted until the key is
+				// claimed and a mismatch after.
+				if r.err != nil {
+					requireRejection(ht, r.err, idempotencyMismatch(idempotencyKey))
+				} else if len(r.transfers) != 0 {
+					ht.Errorf("empty call %d returned %v", i, transferRows(r.transfers))
+				}
+			case c.matches(calls[winner]):
+				if r.err != nil {
+					ht.Errorf("call %d %s matches the claiming call %d but was rejected: %v", i, describe(c.Reqs), winner, r.err)
+				} else if got := transferRows(r.transfers); !slices.Equal(got, claimed) {
+					ht.Errorf("call %d returned %v, but the claiming call %d returned %v", i, got, winner, claimed)
+				}
+			default:
+				mismatching = true
+				if r.err == nil {
+					ht.Errorf("call %d %s differs from the claiming call %d %s but was accepted",
+						i, describe(c.Reqs), winner, describe(calls[winner].Reqs))
+				} else {
+					requireRejection(ht, r.err, idempotencyMismatch(idempotencyKey))
+				}
+			}
+		}
+		contested.record(mismatching)
+
+		var labelled []string
+		rows, err := conn.Query(ctx, `select id from pgledger_transfers_view where metadata ->> 'idempotency_key' = $1 order by id`, idempotencyKey)
+		if err == nil {
+			labelled, err = pgx.CollectRows(rows, pgx.RowTo[string])
+		}
+		if err != nil {
+			ht.Errorf("transfers with key %s: %v", idempotencyKey, err)
+		}
+		returned := make([]string, 0, len(results[winner].transfers))
+		for _, transfer := range results[winner].transfers {
+			returned = append(returned, transfer.ID)
+		}
+		if !slices.Equal(labelled, returned) {
+			ht.Errorf("key %s labels transfers %v, but the claiming call returned %v", idempotencyKey, labelled, returned)
+		}
+
+		if reason := m.applyBatch(calls[winner].Reqs); reason != "" {
+			ht.Errorf("model rejected the claiming call %s: %s", describe(calls[winner].Reqs), reason)
+		}
+		s.assertMatchesModel(ht, m)
+		s.assertInvariants(ht)
+	})
+
+	contested.require(t, "raced a mismatching call", 0.3)
 }
 
 func TestEventAtAndMetadataApplyToEveryTransferInBatch(t *testing.T) {
