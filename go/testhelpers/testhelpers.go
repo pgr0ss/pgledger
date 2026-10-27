@@ -56,6 +56,12 @@ type Entry struct {
 	Metadata               *string
 }
 
+type IdempotencyKey struct {
+	IdempotencyKey string
+	RequestIndex   int
+	TransferID     string
+}
+
 func SetupParallel(t *testing.T) *pgxpool.Pool {
 	t.Parallel()
 	return DBConn(t)
@@ -115,6 +121,16 @@ func GetEntries(t TestingT, conn *pgxpool.Pool, accountID string) []Entry {
 	assert.NoError(t, err)
 
 	return entries
+}
+
+func GetIdempotencyKeys(t TestingT, conn *pgxpool.Pool, idempotencyKey string) []IdempotencyKey {
+	rows, err := conn.Query(t.Context(), "select * from pgledger_idempotency_keys_view where idempotency_key = $1 order by request_index", idempotencyKey)
+	assert.NoError(t, err)
+
+	idempotencyKeys, err := pgx.CollectRows(rows, pgx.RowToStructByName[IdempotencyKey])
+	assert.NoError(t, err)
+
+	return idempotencyKeys
 }
 
 func QueryOne[T any](t TestingT, conn *pgxpool.Pool, sql string, args ...any) *T {

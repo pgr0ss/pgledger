@@ -15,13 +15,15 @@ import (
 )
 
 // scope is the accounts one test case owns. The suite shares a database with
-// parallel tests, so every assertion must be restricted to these ids.
+// parallel tests, so every assertion must be restricted to these ids, and
+// idempotency keys, which are global, to idempotencyKeyPrefix.
 type scope struct {
-	conn     *pgxpool.Pool
-	ctx      context.Context
-	mu       sync.Mutex
-	accounts []scopeAccount
-	created  int
+	conn                 *pgxpool.Pool
+	ctx                  context.Context
+	mu                   sync.Mutex
+	accounts             []scopeAccount
+	created              int
+	idempotencyKeyPrefix string
 }
 
 type scopeAccount struct {
@@ -31,11 +33,19 @@ type scopeAccount struct {
 }
 
 func newScope(tc hegel.TestCase, ctx context.Context, conn *pgxpool.Pool, specs []accountSpec) *scope {
-	s := &scope{conn: conn, ctx: ctx}
+	s := &scope{conn: conn, ctx: ctx, idempotencyKeyPrefix: fmt.Sprintf("prop-key-%d-", rand.Int64())}
 	for _, spec := range specs {
 		s.addAccount(tc, spec)
 	}
 	return s
+}
+
+func (s *scope) idempotencyKeys(n int) []string {
+	idempotencyKeys := make([]string, n)
+	for i := range idempotencyKeys {
+		idempotencyKeys[i] = fmt.Sprintf("%s%d", s.idempotencyKeyPrefix, i)
+	}
+	return idempotencyKeys
 }
 
 func (s *scope) addAccount(tc hegel.TestCase, spec accountSpec) scopeAccount {
@@ -123,25 +133,28 @@ func transferLiterals(rows [][3]any) (literals []string, args []any) {
 
 func (s *scope) createTransfers(reqs []request, eventAt *time.Time, metadata *string) ([]testhelpers.Transfer, error) {
 	literals, args := s.requestArgs(reqs)
-	return s.createTransferArray(literals, args, eventAt, metadata)
+	return s.createTransferArray(literals, args, eventAt, metadata, nil)
 }
 
 func (s *scope) createTransfersBetween(rows [][3]any) ([]testhelpers.Transfer, error) {
 	literals, args := transferLiterals(rows)
-	return s.createTransferArray(literals, args, nil, nil)
+	return s.createTransferArray(literals, args, nil, nil, nil)
 }
 
-func (s *scope) createTransferArray(literals []string, args []any, eventAt *time.Time, metadata *string) ([]testhelpers.Transfer, error) {
+func (s *scope) createTransferArray(literals []string, args []any, eventAt *time.Time, metadata, idempotencyKey *string) ([]testhelpers.Transfer, error) {
+	sql, args := transferArraySQL(literals, args, eventAt, metadata, idempotencyKey)
+	return s.query(sql, args...)
+}
+
+func transferArraySQL(literals []string, args []any, eventAt *time.Time, metadata, idempotencyKey *string) (string, []any) {
 	arrayLit := "array[]::transfer_request[]"
 	if len(literals) > 0 {
 		arrayLit = "array[" + strings.Join(literals, ", ") + "]::transfer_request[]"
 	}
 	sql := fmt.Sprintf(`select * from pgledger_create_transfers(
-		transfer_requests => %s, event_at => $%d::timestamptz, metadata => $%d::jsonb)`,
-		arrayLit, len(args)+1, len(args)+2)
-	args = append(args, eventAt, metadata)
-
-	return s.query(sql, args...)
+		transfer_requests => %s, event_at => $%d::timestamptz, metadata => $%d::jsonb, idempotency_key => $%d::text)`,
+		arrayLit, len(args)+1, len(args)+2, len(args)+3)
+	return sql, append(args, eventAt, metadata, idempotencyKey)
 }
 
 // createTransfersVariadic needs a non-empty reqs: VARIADIC has no empty-batch
@@ -153,9 +166,46 @@ func (s *scope) createTransfersVariadic(reqs []request) ([]testhelpers.Transfer,
 }
 
 func (s *scope) createTransfer(req request, eventAt *time.Time, metadata *string) ([]testhelpers.Transfer, error) {
+	return s.createKeyedTransfer(req, eventAt, metadata, nil)
+}
+
+func (s *scope) createKeyedTransfer(req request, eventAt *time.Time, metadata, idempotencyKey *string) ([]testhelpers.Transfer, error) {
 	ids := s.accountIDs()
-	return s.query(`select * from pgledger_create_transfer($1::text, $2::text, $3::numeric, $4::timestamptz, $5::jsonb)`,
-		accountArg(ids, req.FromIdx), accountArg(ids, req.ToIdx), amountArg(req.Amount), eventAt, metadata)
+	return s.query(`select * from pgledger_create_transfer($1::text, $2::text, $3::numeric, $4::timestamptz, $5::jsonb, $6::text)`,
+		accountArg(ids, req.FromIdx), accountArg(ids, req.ToIdx), amountArg(req.Amount), eventAt, metadata, idempotencyKey)
+}
+
+// createCall sends a one-request call through pgledger_create_transfer when
+// single is set.
+func (s *scope) createCall(c call, single bool) ([]testhelpers.Transfer, error) {
+	if single && len(c.Reqs) == 1 {
+		return s.createKeyedTransfer(c.Reqs[0], c.EventAt, c.metadataJSON(), c.IdempotencyKey)
+	}
+	literals, args := s.requestArgs(c.Reqs)
+	return s.createTransferArray(literals, args, c.EventAt, c.metadataJSON(), c.IdempotencyKey)
+}
+
+// createCallIn sends c through pgledger_create_transfers as the only statement
+// of a transaction at isolation, so a REPEATABLE READ or SERIALIZABLE snapshot
+// is taken as the call starts.
+func (s *scope) createCallIn(c call, isolation pgx.TxIsoLevel) ([]testhelpers.Transfer, error) {
+	tx, err := s.conn.BeginTx(s.ctx, pgx.TxOptions{IsoLevel: isolation})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(s.ctx) }()
+
+	literals, args := s.requestArgs(c.Reqs)
+	sql, args := transferArraySQL(literals, args, c.EventAt, c.metadataJSON(), c.IdempotencyKey)
+	rows, err := tx.Query(s.ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	transfers, err := pgx.CollectRows(rows, pgx.RowToStructByName[testhelpers.Transfer])
+	if err != nil {
+		return nil, err
+	}
+	return transfers, tx.Commit(s.ctx)
 }
 
 func (s *scope) query(sql string, args ...any) ([]testhelpers.Transfer, error) {
@@ -258,6 +308,18 @@ func (s *scope) assertInvariants(tc hegel.TestCase) {
 		join pgledger_accounts f on f.id = t.from_account_id
 		join pgledger_accounts d on d.id = t.to_account_id
 		where t.from_account_id = any($1) and f.currency != d.currency`, ids)
+
+	// One call's transfers share created_at (now() is the transaction start),
+	// event_at and metadata, so a key spanning more than one combination was
+	// claimed twice.
+	s.reportViolations(tc, "idempotency key is held by more than one call", `
+		select format('idempotency key %s is held by %s calls: %s',
+			k.idempotency_key, count(distinct (t.created_at, t.event_at, t.metadata)), array_agg(t.id order by t.id))
+		from pgledger_idempotency_keys_view k
+		join pgledger_transfers t on t.id = k.transfer_id
+		where t.from_account_id = any($1)
+		group by k.idempotency_key
+		having count(distinct (t.created_at, t.event_at, t.metadata)) > 1`, ids)
 
 	// Order by account_version, not id: below PostgreSQL 18 entry ids come from
 	// a uuidv7 fallback that is not monotonic within a microsecond.

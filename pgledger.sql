@@ -67,6 +67,16 @@ CREATE INDEX ON pgledger_transfers (from_account_id);
 CREATE INDEX ON pgledger_transfers (to_account_id);
 CREATE INDEX ON pgledger_transfers (event_at);
 
+-- One row per transfer created by a call with an idempotency key. request_index
+-- is the transfer's 1-based position in the call, so every claiming call writes
+-- (idempotency_key, 1) and the primary key admits only one claim per key.
+CREATE TABLE pgledger_idempotency_keys (
+    idempotency_key TEXT NOT NULL,
+    request_index INTEGER NOT NULL,
+    transfer_id TEXT NOT NULL REFERENCES pgledger_transfers (id),
+    PRIMARY KEY (idempotency_key, request_index)
+);
+
 CREATE TABLE pgledger_entries (
     id TEXT PRIMARY KEY DEFAULT pgledger_generate_id('pgle'),
     account_id TEXT NOT NULL REFERENCES pgledger_accounts (id),
@@ -121,6 +131,13 @@ SELECT
 FROM pgledger_entries e
 INNER JOIN pgledger_transfers t ON e.transfer_id = t.id;
 
+CREATE VIEW pgledger_idempotency_keys_view AS
+SELECT
+    idempotency_key,
+    request_index,
+    transfer_id
+FROM pgledger_idempotency_keys;
+
 CREATE OR REPLACE FUNCTION pgledger_create_account(
     name TEXT,
     currency TEXT,
@@ -165,7 +182,8 @@ CREATE OR REPLACE FUNCTION pgledger_create_transfer(
     to_account_id TEXT,
     amount NUMERIC,
     event_at TIMESTAMPTZ DEFAULT NULL,
-    metadata JSONB DEFAULT NULL
+    metadata JSONB DEFAULT NULL,
+    idempotency_key TEXT DEFAULT NULL
 )
 RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
 AS $$
@@ -175,7 +193,8 @@ BEGIN
     SELECT * FROM pgledger_create_transfers(
         transfer_requests => array[(from_account_id, to_account_id, amount)::TRANSFER_REQUEST],
         event_at => event_at,
-        metadata => metadata
+        metadata => metadata,
+        idempotency_key => idempotency_key
     );
 END;
 $$ LANGUAGE plpgsql;
@@ -193,7 +212,8 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION pgledger_create_transfers(
     transfer_requests TRANSFER_REQUEST[],
     event_at TIMESTAMPTZ DEFAULT NULL,
-    metadata JSONB DEFAULT NULL
+    metadata JSONB DEFAULT NULL,
+    idempotency_key TEXT DEFAULT NULL
 )
 RETURNS SETOF PGLEDGER_TRANSFERS_VIEW
 AS $$
@@ -206,9 +226,52 @@ DECLARE
     from_account_id TEXT;
     to_account_id TEXT;
     all_account_ids TEXT[] := '{}';
+    claimed_requests TRANSFER_REQUEST[];
+    claimed_details_match BOOLEAN;
 BEGIN
     IF transfer_requests IS NULL THEN
         RAISE EXCEPTION 'Transfer requests must not be null';
+    END IF;
+
+    IF idempotency_key IS NOT NULL THEN
+        -- Serialize calls sharing a key until the transaction ends, so that
+        -- under READ COMMITTED the lookup below sees any claim a previous holder
+        -- committed and replays it.
+        PERFORM pg_advisory_xact_lock(hashtextextended(idempotency_key, 0));
+
+        -- Requests compare in order, since balance constraints are checked after
+        -- each request, with amounts compared numerically
+        SELECT
+            array_agg(
+                (t.from_account_id, t.to_account_id, t.amount)::TRANSFER_REQUEST
+                ORDER BY k.request_index
+            ),
+            bool_and(
+                t.metadata IS NOT DISTINCT FROM pgledger_create_transfers.metadata
+                AND t.event_at = coalesce(pgledger_create_transfers.event_at, t.created_at)
+            )
+        INTO claimed_requests, claimed_details_match
+        FROM pgledger_idempotency_keys k
+        INNER JOIN pgledger_transfers t ON k.transfer_id = t.id
+        WHERE k.idempotency_key = pgledger_create_transfers.idempotency_key;
+
+        IF claimed_requests IS NOT NULL THEN
+            IF claimed_details_match AND claimed_requests = ARRAY(
+                SELECT (r.from_account_id, r.to_account_id, r.amount)::TRANSFER_REQUEST
+                FROM unnest(transfer_requests) WITH ORDINALITY AS r (from_account_id, to_account_id, amount, request_index)
+                ORDER BY r.request_index
+            ) THEN
+                RETURN QUERY
+                SELECT v.*
+                FROM pgledger_idempotency_keys k
+                INNER JOIN pgledger_transfers_view v ON k.transfer_id = v.id
+                WHERE k.idempotency_key = pgledger_create_transfers.idempotency_key
+                ORDER BY v.id;
+                RETURN;
+            END IF;
+
+            RAISE EXCEPTION 'Idempotency key (%) was already used with a different request', idempotency_key;
+        END IF;
     END IF;
 
     -- Collect all unique account IDs and sort them to prevent deadlocks
@@ -295,6 +358,12 @@ BEGIN
         INSERT INTO pgledger_entries (account_id, transfer_id, amount, account_previous_balance, account_current_balance, account_version, created_at)
         VALUES (transfer_request.to_account_id, transfer_id, transfer_request.amount, to_account.balance - transfer_request.amount, to_account.balance, to_account.version, now());
     END LOOP;
+
+    IF idempotency_key IS NOT NULL THEN
+        INSERT INTO pgledger_idempotency_keys (idempotency_key, request_index, transfer_id)
+        SELECT pgledger_create_transfers.idempotency_key, claimed.request_index, claimed.transfer_id
+        FROM unnest(transfer_ids) WITH ORDINALITY AS claimed (transfer_id, request_index);
+    END IF;
 
     -- Return all created transfers
     RETURN QUERY

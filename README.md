@@ -221,6 +221,40 @@ and event_at < '2025-07-01'
 order by event_at;
 ```
 
+### Idempotency
+
+Transfers support idempotent calls by passing in an `idempotency_key`. Reusing the same key will return the existing transfer rather than creating a new one:
+
+```sql
+-- First call creates a new transfer
+select id, amount from pgledger_create_transfer($account_1_id, $account_2_id, 12.34, idempotency_key => 'a-random-uuid');
+
+               id                | amount
+---------------------------------+--------
+ pglt_01M5N5ZGRREWESEAZR8GBF95Y6 |  12.34
+(1 row)
+
+-- Second call reusing the idempotency_key returns the existing transfer
+select id, amount from pgledger_create_transfer($account_1_id, $account_2_id, 12.34, idempotency_key => 'a-random-uuid');
+
+               id                | amount
+---------------------------------+--------
+ pglt_01M5N5ZGRREWESEAZR8GBF95Y6 |  12.34
+(1 row)
+```
+
+A retry with the same `idempotency_key` must use the same arguments, with `pgledger_create_transfers` requests in the same order (see [Batch Ordering](#batch-ordering)), or an error will be returned:
+
+```sql
+select id, amount from pgledger_create_transfer($account_2_id, $account_1_id, 43.21, idempotency_key => 'a-random-uuid');
+
+ERROR:  Idempotency key (a-random-uuid) was already used with a different request
+```
+
+PostgreSQL has several [transaction isolation levels](https://www.postgresql.org/docs/current/transaction-iso.html). Under Read Committed (the default), concurrent calls with the same `idempotency_key` will wait for each other, and the later ones will return the transfers created from the first call if the requests match. Under Repeatable Read or Serializable, the later calls cannot see transfers created after the start of their own transaction snapshot. So instead of returning the existing transfers, the call will fail and should be re-tried in a new transaction.
+
+For more examples, see: [examples/idempotency.sql.out](examples/idempotency.sql.out)
+
 ### Currencies
 
 Each account is single currency. If you want to maintain balances in multiple currencies, use multiple accounts.
@@ -277,8 +311,8 @@ Performance is a notoriously hard thing to measure, since different usage patter
 Here are some baseline performance numbers on my M3 Macbook Air, with a vanilla, unoptimized PostgreSQL. I set up PostgreSQL with:
 
 ```bash
-brew install postgresql@17
-brew services start postgresql@17
+brew install postgresql@18
+brew services start postgresql@18
 ```
 
 The script can be configured with different numbers of workers and accounts. Each worker runs a loop where it picks 2 accounts at random and creates a transfer between them. To simulate a scenario where there isn't much account contention, we can ensure there are many more accounts than workers. That way, concurrent workers rarely try to transfer between the same accounts. For example:
@@ -286,14 +320,14 @@ The script can be configured with different numbers of workers and accounts. Eac
 ```bash
 > go run performance_check.go --accounts=50 --workers=20 --duration=30s
 
-Completed transfers: 319105
+Completed transfers: 406712
 Elapsed time in seconds: 30.0
-Database size before: 1795 MB
-Database size after:  2021 MB
-Database size growth in bytes: 237223936
-Transfers/second: 10636.8
-Milliseconds/transfer: 1.9
-Bytes/transfer: 743
+Database size before: 1751 MB
+Database size after:  2051 MB
+Database size growth in bytes: 314925056
+Transfers/second: 13557.0
+Milliseconds/transfer: 1.5
+Bytes/transfer: 774
 ```
 
 We can also simulate more account contention, where workers may need to wait on other workers currently using the same accounts:
@@ -301,14 +335,29 @@ We can also simulate more account contention, where workers may need to wait on 
 ```bash
 > go run performance_check.go --accounts=10 --workers=20 --duration=30s
 
-Completed transfers: 226767
+Completed transfers: 279179
 Elapsed time in seconds: 30.0
-Database size before: 2021 MB
-Database size after:  2182 MB
-Database size growth in bytes: 168566784
-Transfers/second: 7558.9
-Milliseconds/transfer: 2.6
-Bytes/transfer: 743
+Database size before: 2051 MB
+Database size after:  2257 MB
+Database size growth in bytes: 216203264
+Transfers/second: 9305.9
+Milliseconds/transfer: 2.1
+Bytes/transfer: 774
+```
+
+We can also simulate passing unique idempotency_keys on every request to see the performance impact:
+
+```bash
+> go run performance_check.go --accounts=50 --workers=20 --duration=30s --idempotency-keys
+
+Completed transfers: 344423
+Elapsed time in seconds: 30.0
+Database size before: 2361 MB
+Database size after:  2673 MB
+Database size growth in bytes: 327647232
+Transfers/second: 11480.6
+Milliseconds/transfer: 1.7
+Bytes/transfer: 951
 ```
 
 ## Development
