@@ -349,26 +349,3 @@ And run the full set of tests and linters with:
 ```bash
 just check
 ```
-
-## TODO
-
-- Make the transfer view include the currency and account names as well as the ids
-  - Update the multi-currency example to show the transfers for a conversion
-- Make create_transfers function return account balances as well
-- Query via versioned views
-  - `select * from pgledger_transfers_v1`
-  - This way I can iterate on the underlying tables without breaking queries
-  - Later, add `pgledger_transfers_v2`
-  - Rename tables to be internal? `pgledger_internal_transfers`
-  - Add version to functions? `pgledger_create_transfer_v1`
-- Structure sql as a series of numbered migrations (e.g. pgledger_01.sql) so new versions can be applied to existing databases
-  - Also dump an overall pgledger.sql so it's easier to review in one place
-- Add postgres documentation comments?
-- Show how name can be used like ltree: https://www.postgresql.org/docs/current/ltree.html
-  - Allow create_transfers to take account name instead of id? Or a separate function for this?
-- Add a function to get account balance at a specific point in time (select balance from most recent entry before the time)
-- Potential performance improvements
-  - Since ULIDs have embedded time, do we need created_at columns? Could we use a virtual generated column instead?
-  - We could also deconstruct the ULID and store it as a UUID, but would need a special type or view to reconstruct the prefixed ULID form
-  - Do we need from/to accounts on transfers? Could we make a queryable view for transfers instead which queries from the entries?
-  - If event_date is not provided, we could store it as null (saving 8 bytes?), and then update the view to do a `COALESCE(event_at, created_at)`. We would need an index on the COALESCE statement, so not sure how much it would actually save
