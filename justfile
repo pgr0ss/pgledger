@@ -84,6 +84,6 @@ run-examples: dbreset
       echo >> $out
 
       cat "$file" | \
-        docker compose exec --no-TTY postgres psql -U pgledger --echo-all --no-psqlrc \
-        >> $out 2>&1
+        docker compose exec --no-TTY postgres sh -c 'psql -U pgledger --echo-all --no-psqlrc 2>&1' \
+        >> $out
     done
