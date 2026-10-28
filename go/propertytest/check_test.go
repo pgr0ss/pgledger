@@ -8,8 +8,8 @@ import (
 	"hegel.dev/go/hegel"
 )
 
-// T replaces *hegel.T: hegel.Test (v0.9.23) calls t.Fail() without a message
-// when the engine itself ends the run (failed health check, nondeterminism,
+// T replaces *hegel.T: hegel.Test (v0.9.27) calls t.Fail() without a message
+// when the engine itself ends the run (failed health check, unsatisfiable,
 // engine error), so properties run through hegel.Run, which returns the error.
 // Bodies fail with Errorf, not a Fatalf wrapper here: hegel tells distinct
 // failures apart by origin.

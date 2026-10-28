@@ -41,9 +41,9 @@ func main() {
 	}
 	defer conn.Close()
 
-	// Findings catches failures hegel reports as success (see
-	// propertytest.Findings). The deadline exits from inside the callback, so
-	// it must be checked there as well as after Workload returns.
+	// The deadline exits from inside the callback, possibly while hegel is
+	// shrinking a failure, so Findings is checked there as well as after
+	// Workload returns.
 	var found propertytest.Findings
 	report := func() {
 		if failures := found.Failures(); len(failures) != 0 {
