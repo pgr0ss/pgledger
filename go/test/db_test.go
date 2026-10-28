@@ -1,6 +1,7 @@
 package test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -825,4 +826,521 @@ func TestAccountNameAndCurrencyExtremes(t *testing.T) {
 
 	assert.Equal(t, "-12.34", testhelpers.GetAccount(t, conn, unicodeAccount.ID).Balance)
 	assert.Equal(t, "12.34", testhelpers.GetAccount(t, conn, otherUnicodeAccount.ID).Balance)
+}
+
+func TestIdempotencyKeyReturnsExistingTransfer(t *testing.T) {
+	conn := testhelpers.SetupParallel(t)
+
+	account1 := testhelpers.CreateAccount(t, conn, "account 1", "USD")
+	account2 := testhelpers.CreateAccount(t, conn, "account 2", "USD")
+	idempotencyKey := "transfer-" + account1.ID
+
+	created, err := queryTransfers(t, conn, "select * from pgledger_create_transfer($1, $2, '12.34', idempotency_key => $3)", account1.ID, account2.ID, idempotencyKey)
+	assert.NoError(t, err)
+	assert.Len(t, created, 1)
+	assert.Equal(t, []testhelpers.IdempotencyKey{{IdempotencyKey: idempotencyKey, RequestIndex: 1, TransferID: created[0].ID}}, testhelpers.GetIdempotencyKeys(t, conn, idempotencyKey))
+
+	retried, err := queryTransfers(t, conn, "select * from pgledger_create_transfer($1, $2, '12.34', idempotency_key => $3)", account1.ID, account2.ID, idempotencyKey)
+	assert.NoError(t, err)
+	assert.Equal(t, created, retried)
+
+	// pgledger_create_transfer is a one-request pgledger_create_transfers, so
+	// they share keys.
+	batched, err := queryTransfers(t, conn, "select * from pgledger_create_transfers(array[($1, $2, '12.34')]::transfer_request[], idempotency_key => $3)", account1.ID, account2.ID, idempotencyKey)
+	assert.NoError(t, err)
+	assert.Equal(t, created, batched)
+
+	foundAccount1 := testhelpers.GetAccount(t, conn, account1.ID)
+	foundAccount2 := testhelpers.GetAccount(t, conn, account2.ID)
+
+	assert.Equal(t, "-12.34", foundAccount1.Balance)
+	assert.Equal(t, "12.34", foundAccount2.Balance)
+	assert.Equal(t, 1, foundAccount1.Version)
+	assert.Equal(t, 1, foundAccount2.Version)
+	assert.Len(t, testhelpers.GetEntries(t, conn, account1.ID), 1)
+	assert.Len(t, testhelpers.GetEntries(t, conn, account2.ID), 1)
+}
+
+func TestIdempotencyKeyReturnsExistingBatch(t *testing.T) {
+	conn := testhelpers.SetupParallel(t)
+
+	account1 := testhelpers.CreateAccount(t, conn, "account 1", "USD")
+	account2 := testhelpers.CreateAccount(t, conn, "account 2", "USD")
+	account3 := testhelpers.CreateAccount(t, conn, "account 3", "USD")
+	idempotencyKey := "batch-" + account1.ID
+	metadata := `{"note": "batch"}`
+
+	eventAt, err := time.Parse(time.RFC3339, "2025-07-01T12:34:56Z")
+	assert.NoError(t, err)
+
+	created, err := queryTransfers(t, conn, `
+		select * from pgledger_create_transfers(array[
+			($1, $2, '10'),
+			($2, $3, '20'),
+			($1, $2, '10')
+		]::transfer_request[], $4, $5, $6)`,
+		account1.ID, account2.ID, account3.ID, eventAt, metadata, idempotencyKey)
+	assert.NoError(t, err)
+	assert.Len(t, created, 3)
+	assert.Equal(t, []testhelpers.IdempotencyKey{
+		{IdempotencyKey: idempotencyKey, RequestIndex: 1, TransferID: created[0].ID},
+		{IdempotencyKey: idempotencyKey, RequestIndex: 2, TransferID: created[1].ID},
+		{IdempotencyKey: idempotencyKey, RequestIndex: 3, TransferID: created[2].ID},
+	}, testhelpers.GetIdempotencyKeys(t, conn, idempotencyKey))
+
+	retried, err := queryTransfers(t, conn, `
+		select * from pgledger_create_transfers(array[
+			($1, $2, '10'),
+			($2, $3, '20'),
+			($1, $2, '10')
+		]::transfer_request[], $4, $5, $6)`,
+		account1.ID, account2.ID, account3.ID, eventAt, metadata, idempotencyKey)
+	assert.NoError(t, err)
+	assert.Equal(t, created, retried)
+
+	// Amounts compare numerically, and the stored transfers come back as they
+	// were first written.
+	respelled, err := queryTransfers(t, conn, `
+		select * from pgledger_create_transfers(array[
+			($1, $2, '10.0'),
+			($2, $3, '20.00'),
+			($1, $2, '10')
+		]::transfer_request[], $4, $5, $6)`,
+		account1.ID, account2.ID, account3.ID, eventAt, metadata, idempotencyKey)
+	assert.NoError(t, err)
+	assert.Equal(t, created, respelled)
+
+	foundAccount1 := testhelpers.GetAccount(t, conn, account1.ID)
+	foundAccount2 := testhelpers.GetAccount(t, conn, account2.ID)
+	foundAccount3 := testhelpers.GetAccount(t, conn, account3.ID)
+
+	assert.Equal(t, "-20", foundAccount1.Balance)
+	assert.Equal(t, "0", foundAccount2.Balance)
+	assert.Equal(t, "20", foundAccount3.Balance)
+	assert.Equal(t, 2, foundAccount1.Version)
+	assert.Equal(t, 3, foundAccount2.Version)
+	assert.Equal(t, 1, foundAccount3.Version)
+}
+
+func TestIdempotencyKeyWithDifferentRequestIsRejected(t *testing.T) {
+	conn := testhelpers.SetupParallel(t)
+
+	account1 := testhelpers.CreateAccount(t, conn, "account 1", "USD")
+	account2 := testhelpers.CreateAccount(t, conn, "account 2", "USD")
+	account3 := testhelpers.CreateAccount(t, conn, "account 3", "USD")
+	idempotencyKey := "mismatch-" + account1.ID
+
+	eventAt, err := time.Parse(time.RFC3339, "2025-07-01T12:34:56Z")
+	assert.NoError(t, err)
+
+	created, err := queryTransfers(t, conn,
+		"select * from pgledger_create_transfers(array[($1, $2, '10'), ($2, $3, '20')]::transfer_request[], $4, idempotency_key => $5)",
+		account1.ID, account2.ID, account3.ID, eventAt, idempotencyKey)
+	assert.NoError(t, err)
+	assert.Len(t, created, 2)
+
+	for _, retry := range []struct {
+		name string
+		sql  string
+		args []any
+	}{
+		{
+			"different amount",
+			"select * from pgledger_create_transfers(array[($1, $2, '11'), ($2, $3, '20')]::transfer_request[], $4, idempotency_key => $5)",
+			[]any{account1.ID, account2.ID, account3.ID, eventAt, idempotencyKey},
+		},
+		{
+			"different account",
+			"select * from pgledger_create_transfers(array[($1, $3, '10'), ($2, $3, '20')]::transfer_request[], $4, idempotency_key => $5)",
+			[]any{account1.ID, account2.ID, account3.ID, eventAt, idempotencyKey},
+		},
+		{
+			"reversed direction",
+			"select * from pgledger_create_transfers(array[($2, $1, '10'), ($2, $3, '20')]::transfer_request[], $4, idempotency_key => $5)",
+			[]any{account1.ID, account2.ID, account3.ID, eventAt, idempotencyKey},
+		},
+		{
+			"reordered requests",
+			"select * from pgledger_create_transfers(array[($2, $3, '20'), ($1, $2, '10')]::transfer_request[], $4, idempotency_key => $5)",
+			[]any{account1.ID, account2.ID, account3.ID, eventAt, idempotencyKey},
+		},
+		{
+			"missing request",
+			"select * from pgledger_create_transfer($1, $2, '10', $3, idempotency_key => $4)",
+			[]any{account1.ID, account2.ID, eventAt, idempotencyKey},
+		},
+		{
+			"extra request",
+			"select * from pgledger_create_transfers(array[($1, $2, '10'), ($2, $3, '20'), ($1, $2, '10')]::transfer_request[], $4, idempotency_key => $5)",
+			[]any{account1.ID, account2.ID, account3.ID, eventAt, idempotencyKey},
+		},
+		{
+			"empty batch",
+			"select * from pgledger_create_transfers(array[]::transfer_request[], $1, idempotency_key => $2)",
+			[]any{eventAt, idempotencyKey},
+		},
+		{
+			"invalid amount",
+			"select * from pgledger_create_transfers(array[($1, $2, '0'), ($2, $3, '20')]::transfer_request[], $4, idempotency_key => $5)",
+			[]any{account1.ID, account2.ID, account3.ID, eventAt, idempotencyKey},
+		},
+		{
+			"different event_at",
+			"select * from pgledger_create_transfers(array[($1, $2, '10'), ($2, $3, '20')]::transfer_request[], $4, idempotency_key => $5)",
+			[]any{account1.ID, account2.ID, account3.ID, eventAt.Add(time.Second), idempotencyKey},
+		},
+		{
+			"default event_at",
+			"select * from pgledger_create_transfers(array[($1, $2, '10'), ($2, $3, '20')]::transfer_request[], idempotency_key => $4)",
+			[]any{account1.ID, account2.ID, account3.ID, idempotencyKey},
+		},
+		{
+			"different metadata",
+			"select * from pgledger_create_transfers(array[($1, $2, '10'), ($2, $3, '20')]::transfer_request[], $4, $5, $6)",
+			[]any{account1.ID, account2.ID, account3.ID, eventAt, `{"note": "retry"}`, idempotencyKey},
+		},
+	} {
+		_, err := queryTransfers(t, conn, retry.sql, retry.args...)
+		assert.ErrorContains(t, err, fmt.Sprintf("Idempotency key (%s) was already used with a different request", idempotencyKey), retry.name)
+
+		var pgErr *pgconn.PgError
+		if assert.ErrorAs(t, err, &pgErr, retry.name) {
+			assert.Equal(t, "P0001", pgErr.Code, retry.name)
+		}
+	}
+
+	foundAccount1 := testhelpers.GetAccount(t, conn, account1.ID)
+	foundAccount2 := testhelpers.GetAccount(t, conn, account2.ID)
+	foundAccount3 := testhelpers.GetAccount(t, conn, account3.ID)
+
+	assert.Equal(t, "-10", foundAccount1.Balance)
+	assert.Equal(t, "-10", foundAccount2.Balance)
+	assert.Equal(t, "20", foundAccount3.Balance)
+	assert.Equal(t, 1, foundAccount1.Version)
+	assert.Equal(t, 2, foundAccount2.Version)
+	assert.Equal(t, 1, foundAccount3.Version)
+
+	retried, err := queryTransfers(t, conn,
+		"select * from pgledger_create_transfers(array[($1, $2, '10'), ($2, $3, '20')]::transfer_request[], $4, idempotency_key => $5)",
+		account1.ID, account2.ID, account3.ID, eventAt, idempotencyKey)
+	assert.NoError(t, err)
+	assert.Equal(t, created, retried)
+}
+
+func TestIdempotencyKeyWithDefaultEventAt(t *testing.T) {
+	conn := testhelpers.SetupParallel(t)
+
+	account1 := testhelpers.CreateAccount(t, conn, "account 1", "USD")
+	account2 := testhelpers.CreateAccount(t, conn, "account 2", "USD")
+	idempotencyKey := "default-event-at-" + account1.ID
+
+	created, err := queryTransfers(t, conn, "select * from pgledger_create_transfer($1, $2, '10', idempotency_key => $3)", account1.ID, account2.ID, idempotencyKey)
+	assert.NoError(t, err)
+	assert.Len(t, created, 1)
+	assert.Equal(t, created[0].CreatedAt, created[0].EventAt)
+
+	retried, err := queryTransfers(t, conn, "select * from pgledger_create_transfer($1, $2, '10', idempotency_key => $3)", account1.ID, account2.ID, idempotencyKey)
+	assert.NoError(t, err)
+	assert.Equal(t, created, retried)
+
+	eventAt, err := time.Parse(time.RFC3339, "2025-07-01T12:34:56Z")
+	assert.NoError(t, err)
+
+	_, err = queryTransfers(t, conn, "select * from pgledger_create_transfer($1, $2, '10', $3, idempotency_key => $4)", account1.ID, account2.ID, eventAt, idempotencyKey)
+	assert.ErrorContains(t, err, fmt.Sprintf("Idempotency key (%s) was already used with a different request", idempotencyKey))
+
+	assert.Equal(t, "10", testhelpers.GetAccount(t, conn, account2.ID).Balance)
+}
+
+func TestRejectedTransferDoesNotClaimIdempotencyKey(t *testing.T) {
+	conn := testhelpers.SetupParallel(t)
+
+	positiveOnly := testhelpers.QueryOne[testhelpers.Account](t, conn, "select * from pgledger_create_account('positive-only', 'USD', allow_negative_balance => false)")
+	account2 := testhelpers.CreateAccount(t, conn, "account 2", "USD")
+	idempotencyKey := "rejected-" + positiveOnly.ID
+
+	outOfPositiveOnly := "select * from pgledger_create_transfer($1, $2, '10', idempotency_key => $3)"
+
+	_, err := queryTransfers(t, conn, outOfPositiveOnly, positiveOnly.ID, account2.ID, idempotencyKey)
+	assert.ErrorContains(t, err, fmt.Sprintf("Account (id=%s, name=%s) does not allow negative balance", positiveOnly.ID, "positive-only"))
+
+	// The rejected call rolled back, so a different request can claim the key.
+	created, err := queryTransfers(t, conn, outOfPositiveOnly, account2.ID, positiveOnly.ID, idempotencyKey)
+	assert.NoError(t, err)
+	assert.Len(t, created, 1)
+
+	retried, err := queryTransfers(t, conn, outOfPositiveOnly, account2.ID, positiveOnly.ID, idempotencyKey)
+	assert.NoError(t, err)
+	assert.Equal(t, created, retried)
+
+	// positive-only now holds 10, so only the key stops the original request.
+	_, err = queryTransfers(t, conn, outOfPositiveOnly, positiveOnly.ID, account2.ID, idempotencyKey)
+	assert.ErrorContains(t, err, fmt.Sprintf("Idempotency key (%s) was already used with a different request", idempotencyKey))
+
+	assert.Equal(t, "10", testhelpers.GetAccount(t, conn, positiveOnly.ID).Balance)
+	assert.Equal(t, "-10", testhelpers.GetAccount(t, conn, account2.ID).Balance)
+}
+
+func TestIdempotencyKeyWithinOneTransaction(t *testing.T) {
+	conn := testhelpers.SetupParallel(t)
+
+	account1 := testhelpers.CreateAccount(t, conn, "account 1", "USD")
+	account2 := testhelpers.CreateAccount(t, conn, "account 2", "USD")
+	idempotencyKey := "transaction-" + account1.ID
+
+	tx, err := conn.Begin(t.Context())
+	assert.NoError(t, err)
+
+	var ids []string
+	for range 2 {
+		rows, err := tx.Query(t.Context(), "select id from pgledger_create_transfer($1, $2, '10', idempotency_key => $3)", account1.ID, account2.ID, idempotencyKey)
+		assert.NoError(t, err)
+
+		id, err := pgx.CollectExactlyOneRow(rows, pgx.RowTo[string])
+		assert.NoError(t, err)
+		ids = append(ids, id)
+	}
+
+	assert.NoError(t, tx.Commit(t.Context()))
+
+	assert.Len(t, ids, 2)
+	assert.Equal(t, ids[0], ids[1])
+	assert.Equal(t, "10", testhelpers.GetAccount(t, conn, account2.ID).Balance)
+}
+
+func TestIdempotencyKeyConcurrency(t *testing.T) {
+	conn := testhelpers.SetupParallel(t)
+
+	account1 := testhelpers.CreateAccount(t, conn, "account 1", "USD")
+	account2 := testhelpers.CreateAccount(t, conn, "account 2", "USD")
+	idempotencyKey := "concurrent-" + account1.ID
+
+	type result struct {
+		amount    string
+		transfers []testhelpers.Transfer
+		err       error
+	}
+	results := make([]result, 20)
+	var wg sync.WaitGroup
+	for i := range results {
+		wg.Go(func() {
+			amount := []string{"10", "20"}[i%2]
+			transfers, err := queryTransfers(t, conn, "select * from pgledger_create_transfer($1, $2, $3, idempotency_key => $4)", account1.ID, account2.ID, amount, idempotencyKey)
+			results[i] = result{amount: amount, transfers: transfers, err: err}
+		})
+	}
+	wg.Wait()
+
+	// Whichever amount claimed the key first wins; every call with the other
+	// amount is a mismatch.
+	foundAccount2 := testhelpers.GetAccount(t, conn, account2.ID)
+	winner := foundAccount2.Balance
+	assert.Contains(t, []string{"10", "20"}, winner)
+	assert.Equal(t, 1, foundAccount2.Version)
+
+	ids := map[string]bool{}
+	for _, r := range results {
+		if r.amount == winner {
+			assert.NoError(t, r.err)
+			assert.Len(t, r.transfers, 1)
+			for _, transfer := range r.transfers {
+				ids[transfer.ID] = true
+			}
+		} else {
+			assert.ErrorContains(t, r.err, fmt.Sprintf("Idempotency key (%s) was already used with a different request", idempotencyKey))
+		}
+	}
+	assert.Len(t, ids, 1)
+}
+
+// A snapshot taken before a concurrent claim commits cannot see it, so the
+// lookup misses; the primary key on the idempotency table still rejects the
+// second claim, even for a request on unrelated accounts.
+func TestIdempotencyKeyIsClaimedOnceWithAStaleSnapshot(t *testing.T) {
+	conn := testhelpers.SetupParallel(t)
+
+	account1 := testhelpers.CreateAccount(t, conn, "account 1", "USD")
+	account2 := testhelpers.CreateAccount(t, conn, "account 2", "USD")
+	account3 := testhelpers.CreateAccount(t, conn, "account 3", "USD")
+	account4 := testhelpers.CreateAccount(t, conn, "account 4", "USD")
+
+	for _, isolation := range []pgx.TxIsoLevel{pgx.RepeatableRead, pgx.Serializable} {
+		idempotencyKey := fmt.Sprintf("stale-snapshot-%s-%s", isolation, account1.ID)
+
+		stale, err := conn.BeginTx(t.Context(), pgx.TxOptions{IsoLevel: isolation})
+		assert.NoError(t, err)
+		_, err = stale.Exec(t.Context(), "select 1")
+		assert.NoError(t, err)
+
+		claimed, err := queryTransfers(t, conn, "select * from pgledger_create_transfer($1, $2, '10', idempotency_key => $3)", account1.ID, account2.ID, idempotencyKey)
+		assert.NoError(t, err)
+		assert.Len(t, claimed, 1)
+
+		_, err = stale.Exec(t.Context(), "select * from pgledger_create_transfer($1, $2, '10', idempotency_key => $3)", account3.ID, account4.ID, idempotencyKey)
+		var pgErr *pgconn.PgError
+		if assert.ErrorAs(t, err, &pgErr, isolation) {
+			assert.Equal(t, "23505", pgErr.Code, isolation)
+			assert.Equal(t, `duplicate key value violates unique constraint "pgledger_idempotency_keys_pkey"`, pgErr.Message)
+			assert.Equal(t, "pgledger_idempotency_keys_pkey", pgErr.ConstraintName, isolation)
+		}
+		assert.NoError(t, stale.Rollback(t.Context()))
+
+		assert.Equal(t, []testhelpers.IdempotencyKey{{IdempotencyKey: idempotencyKey, RequestIndex: 1, TransferID: claimed[0].ID}}, testhelpers.GetIdempotencyKeys(t, conn, idempotencyKey), isolation)
+	}
+
+	assert.Equal(t, "20", testhelpers.GetAccount(t, conn, account2.ID).Balance)
+	assert.Equal(t, "0", testhelpers.GetAccount(t, conn, account4.ID).Balance)
+}
+
+// READ COMMITTED takes a new snapshot for each statement, and PostgreSQL runs
+// READ UNCOMMITTED as READ COMMITTED, so a transaction that began before the
+// claim committed still sees it and replays the claimed transfer.
+func TestIdempotencyKeyReplaysInATransactionStartedBeforeTheClaim(t *testing.T) {
+	conn := testhelpers.SetupParallel(t)
+
+	account1 := testhelpers.CreateAccount(t, conn, "account 1", "USD")
+	account2 := testhelpers.CreateAccount(t, conn, "account 2", "USD")
+
+	for _, isolation := range []pgx.TxIsoLevel{pgx.ReadCommitted, pgx.ReadUncommitted} {
+		idempotencyKey := fmt.Sprintf("earlier-transaction-%s-%s", isolation, account1.ID)
+
+		earlier, err := conn.BeginTx(t.Context(), pgx.TxOptions{IsoLevel: isolation})
+		assert.NoError(t, err)
+		_, err = earlier.Exec(t.Context(), "select 1")
+		assert.NoError(t, err)
+
+		claimed, err := queryTransfers(t, conn, "select * from pgledger_create_transfer($1, $2, '10', idempotency_key => $3)", account1.ID, account2.ID, idempotencyKey)
+		assert.NoError(t, err)
+		assert.Len(t, claimed, 1)
+
+		replayed, err := queryTransfers(t, earlier, "select * from pgledger_create_transfer($1, $2, '10', idempotency_key => $3)", account1.ID, account2.ID, idempotencyKey)
+		assert.NoError(t, err, isolation)
+		assert.Equal(t, claimed, replayed, isolation)
+		assert.NoError(t, earlier.Commit(t.Context()))
+
+		assert.Equal(t, []testhelpers.IdempotencyKey{{IdempotencyKey: idempotencyKey, RequestIndex: 1, TransferID: claimed[0].ID}}, testhelpers.GetIdempotencyKeys(t, conn, idempotencyKey), isolation)
+	}
+
+	foundAccount2 := testhelpers.GetAccount(t, conn, account2.ID)
+	assert.Equal(t, "20", foundAccount2.Balance)
+	assert.Equal(t, 2, foundAccount2.Version)
+}
+
+// Each waiter's call blocks on the key's lock until the claiming call commits.
+// Under READ COMMITTED the lookup after the wait sees the claim, so a retry
+// replays it and a different request is a mismatch. Under REPEATABLE READ and
+// SERIALIZABLE the waiter's snapshot was taken as its call started, before the
+// claim committed, so neither replays: a retry fails to lock the accounts the
+// claim updated, and a request on other accounts fails on the primary key. A
+// new transaction afterwards replays the claim at every level.
+func TestIdempotencyKeyWaitersByIsolationLevel(t *testing.T) {
+	conn := testhelpers.SetupParallel(t)
+
+	for _, tt := range []struct {
+		isolation pgx.TxIsoLevel
+		retryCode string // empty when the retry replays the claim
+		otherCode string
+	}{
+		{pgx.ReadCommitted, "", "P0001"},
+		{pgx.RepeatableRead, "40001", "23505"},
+		{pgx.Serializable, "40001", "23505"},
+	} {
+		t.Run(string(tt.isolation), func(t *testing.T) {
+			ctx := t.Context()
+			account1 := testhelpers.CreateAccount(t, conn, "account 1", "USD")
+			account2 := testhelpers.CreateAccount(t, conn, "account 2", "USD")
+			account3 := testhelpers.CreateAccount(t, conn, "account 3", "USD")
+			account4 := testhelpers.CreateAccount(t, conn, "account 4", "USD")
+			idempotencyKey := "waiters-" + account1.ID
+			createTransfer := "select * from pgledger_create_transfer($1, $2, '10', idempotency_key => $3)"
+
+			createTransferInTx := func(from, to string) ([]testhelpers.Transfer, error) {
+				tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: tt.isolation})
+				if err != nil {
+					return nil, err
+				}
+				defer func() { _ = tx.Rollback(ctx) }()
+
+				transfers, err := queryTransfers(t, tx, createTransfer, from, to, idempotencyKey)
+				if err != nil {
+					return nil, err
+				}
+				return transfers, tx.Commit(ctx)
+			}
+
+			claimer, err := conn.Begin(ctx)
+			assert.NoError(t, err)
+			claimed, err := queryTransfers(t, claimer, createTransfer, account1.ID, account2.ID, idempotencyKey)
+			assert.NoError(t, err)
+			assert.Len(t, claimed, 1)
+
+			var retried, other []testhelpers.Transfer
+			var retryErr, otherErr error
+			var wg sync.WaitGroup
+			wg.Go(func() { retried, retryErr = createTransferInTx(account1.ID, account2.ID) })
+			wg.Go(func() { other, otherErr = createTransferInTx(account3.ID, account4.ID) })
+
+			assert.Eventually(t, func() bool { return idempotencyKeyWaiters(t, conn, idempotencyKey) == 2 }, 5*time.Second, 10*time.Millisecond)
+			assert.NoError(t, claimer.Commit(ctx))
+			wg.Wait()
+
+			if tt.retryCode == "" {
+				assert.NoError(t, retryErr)
+				assert.Equal(t, claimed, retried)
+			} else {
+				assertIdempotencyRejection(t, retryErr, tt.retryCode)
+			}
+			assertIdempotencyRejection(t, otherErr, tt.otherCode)
+			assert.Empty(t, other)
+
+			replayed, err := createTransferInTx(account1.ID, account2.ID)
+			assert.NoError(t, err)
+			assert.Equal(t, claimed, replayed)
+
+			assert.Equal(t, []testhelpers.IdempotencyKey{{IdempotencyKey: idempotencyKey, RequestIndex: 1, TransferID: claimed[0].ID}}, testhelpers.GetIdempotencyKeys(t, conn, idempotencyKey))
+			assert.Equal(t, "10", testhelpers.GetAccount(t, conn, account2.ID).Balance)
+			assert.Equal(t, "0", testhelpers.GetAccount(t, conn, account4.ID).Balance)
+		})
+	}
+}
+
+func assertIdempotencyRejection(t *testing.T, err error, code string) {
+	t.Helper()
+
+	var pgErr *pgconn.PgError
+	if !assert.ErrorAs(t, err, &pgErr) {
+		return
+	}
+	assert.Equal(t, code, pgErr.Code, pgErr.Message)
+	switch code {
+	case "P0001":
+		assert.Contains(t, pgErr.Message, "was already used with a different request")
+	case "23505":
+		assert.Equal(t, "pgledger_idempotency_keys_pkey", pgErr.ConstraintName)
+	}
+}
+
+// idempotencyKeyWaiters counts the sessions blocked on the key's advisory
+// lock, which pg_locks splits into the high (classid) and low (objid) halves.
+func idempotencyKeyWaiters(t *testing.T, conn *pgxpool.Pool, idempotencyKey string) int {
+	var waiters int
+	err := conn.QueryRow(t.Context(), `
+		select count(*) from pg_locks
+		where locktype = 'advisory' and objsubid = 1 and not granted
+			and (classid::bigint << 32) | objid::bigint = hashtextextended($1, 0)`, idempotencyKey).Scan(&waiters)
+	assert.NoError(t, err)
+	return waiters
+}
+
+type querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+func queryTransfers(t *testing.T, conn querier, sql string, args ...any) ([]testhelpers.Transfer, error) {
+	rows, err := conn.Query(t.Context(), sql, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	return pgx.CollectRows(rows, pgx.RowToStructByName[testhelpers.Transfer])
 }

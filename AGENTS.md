@@ -9,8 +9,9 @@ Three tables, three views, and a small set of SQL functions:
 - **pgledger_accounts** — each account has a name, currency, balance, version, and optional balance constraints
 - **pgledger_transfers** — each transfer moves a positive amount from one account to another (same currency)
 - **pgledger_entries** — two entries per transfer (debit and credit), recording previous and current balance
+- **pgledger_idempotency_keys** — one row per transfer created by a keyed call: `(idempotency_key, request_index, transfer_id)`, primary key `(idempotency_key, request_index)`
 
-Views (`pgledger_accounts_view`, `pgledger_transfers_view`, `pgledger_entries_view`) are the public query interface. The entries view joins to transfers to include `event_at` and `metadata`.
+Views (`pgledger_accounts_view`, `pgledger_transfers_view`, `pgledger_entries_view`, `pgledger_idempotency_keys_view`) are the public query interface. The entries view joins to transfers to include `event_at` and `metadata`.
 
 All IDs are prefixed ULIDs: `pgla_*` (accounts), `pglt_*` (transfers), `pgle_*` (entries). Generated from UUIDv7 converted to ULID.
 
@@ -32,14 +33,16 @@ pgledger_create_transfer(
     to_account_id TEXT,
     amount NUMERIC,
     event_at TIMESTAMPTZ DEFAULT NULL,
-    metadata JSONB DEFAULT NULL
+    metadata JSONB DEFAULT NULL,
+    idempotency_key TEXT DEFAULT NULL
 ) → SETOF pgledger_transfers_view
 
 -- Create multiple transfers atomically (returns pgledger_transfers_view rows)
 pgledger_create_transfers(
     transfer_requests TRANSFER_REQUEST[],
     event_at TIMESTAMPTZ DEFAULT NULL,
-    metadata JSONB DEFAULT NULL
+    metadata JSONB DEFAULT NULL,
+    idempotency_key TEXT DEFAULT NULL
 ) → SETOF pgledger_transfers_view
 
 -- VARIADIC convenience form
@@ -63,6 +66,8 @@ pgledger_create_transfers(
 - Balance constraints are checked after each update — set both `allow_negative_balance=false` and `allow_positive_balance=false` to freeze an account
 - `pgledger_create_transfers` applies requests in array order and checks each account after every request, so batch order is significant — the same multiset can succeed in one order and fail in another
 - Account `version` increments on every transfer touching that account
+- A non-null `idempotency_key` argument makes a call idempotent: a call with a claimed key returns the claiming call's transfers when it matches (requests in the same order with numeric amounts, same `event_at` or both defaulted, same `metadata`, `NULL` matching `NULL`) and is rejected with `Idempotency key (…) was already used with a different request` otherwise. Order matters because balance constraints are checked after each request. `metadata` has no special keys. The key check runs before request validation and account locking
+- Only an accepted, non-empty call claims a key, by inserting one `pgledger_idempotency_keys` row per transfer after the transfers. Same-key calls serialize on `pg_advisory_xact_lock(hashtextextended(key, 0))`, so under `READ COMMITTED` the lookup after the lock sees a prior claim and replays or rejects it. A `REPEATABLE READ`/`SERIALIZABLE` snapshot that predates a concurrent claim misses it and fails rather than replaying: with a `40001` serialization failure when it locks an account the claim updated (the usual retry case), otherwise with a `23505` unique violation on `pgledger_idempotency_keys_pkey`, since every claim writes `(key, 1)`
 
 ## Implementation
 
