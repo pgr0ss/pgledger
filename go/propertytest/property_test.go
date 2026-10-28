@@ -530,11 +530,14 @@ func TestConcurrentIdempotentCallsClaimTheKeyOnce(t *testing.T) {
 				break
 			}
 		}
-		if winner < 0 {
+		if winner < 0 && slices.ContainsFunc(calls, func(c call) bool { return len(c.Reqs) > 0 }) {
 			ht.Errorf("no concurrent call claimed key %s: %v", idempotencyKey, results)
 			return
 		}
-		claimed := transferRows(results[winner].transfers)
+		var claimed []string
+		if winner >= 0 {
+			claimed = transferRows(results[winner].transfers)
+		}
 
 		mismatching, stale, primaryKey := false, false, false
 		for i, c := range calls {
@@ -552,9 +555,12 @@ func TestConcurrentIdempotentCallsClaimTheKeyOnce(t *testing.T) {
 			switch {
 			case len(c.Reqs) == 0:
 				// An empty batch claims nothing, so it is accepted until the key is
-				// claimed and a mismatch after.
-				if r.err != nil {
+				// claimed and a mismatch after. With no non-empty call, nothing
+				// claims the key and every call is accepted.
+				if r.err != nil && winner >= 0 {
 					requireRejection(ht, r.err, idempotencyMismatch(idempotencyKey))
+				} else if r.err != nil {
+					ht.Errorf("empty call %d was rejected, but no call claimed key %s: %v", i, idempotencyKey, r.err)
 				} else if len(r.transfers) != 0 {
 					ht.Errorf("empty call %d returned %v", i, transferRows(r.transfers))
 				}
@@ -587,17 +593,19 @@ func TestConcurrentIdempotentCallsClaimTheKeyOnce(t *testing.T) {
 		if err != nil {
 			ht.Errorf("transfers with key %s: %v", idempotencyKey, err)
 		}
-		returned := make([]string, 0, len(results[winner].transfers))
-		for _, transfer := range results[winner].transfers {
-			returned = append(returned, transfer.ID)
+		var returned []string
+		if winner >= 0 {
+			for _, transfer := range results[winner].transfers {
+				returned = append(returned, transfer.ID)
+			}
+			if reason := m.applyBatch(calls[winner].Reqs); reason != "" {
+				ht.Errorf("model rejected the claiming call %s: %s", describe(calls[winner].Reqs), reason)
+			}
 		}
 		if !slices.Equal(mapped, returned) {
 			ht.Errorf("key %s maps to transfers %v, but the claiming call returned %v", idempotencyKey, mapped, returned)
 		}
 
-		if reason := m.applyBatch(calls[winner].Reqs); reason != "" {
-			ht.Errorf("model rejected the claiming call %s: %s", describe(calls[winner].Reqs), reason)
-		}
 		s.assertMatchesModel(ht, m)
 		s.assertInvariants(ht)
 	})
