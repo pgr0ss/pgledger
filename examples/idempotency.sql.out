@@ -21,7 +21,7 @@ SELECT uuidv4() AS idempotency_key \gset
 SELECT :'idempotency_key';
                ?column?               
 --------------------------------------
- 1a078b19-8538-4d18-b3b2-c1b20f9d6754
+ 7a1119e6-4f03-4643-a14e-2b086ff800df
 (1 row)
 
 -- Create a transfer using the idempotency_key
@@ -33,7 +33,7 @@ SELECT * FROM pgledger_create_transfer(
 );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata 
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
- pglt_01M5ZQABGHFZ5918A6AEWP63G2 | pgla_01M5ZQABGFEAB8GXX2BHK9YR9V | pgla_01M5ZQABGGEJKT8VA77ZYDT28B |  10.00 | 2026-10-27 22:22:28.368696+00 | 2026-10-27 22:22:28.368696+00 | 
+ pglt_01M64SK6HVE9R9JEP1H8P9317H | pgla_01M64SK6HRE25TEA0YS78FDM8Q | pgla_01M64SK6HRFQM9Y0J4WMXAMYW5 |  10.00 | 2026-10-29 21:38:27.513189+00 | 2026-10-29 21:38:27.513189+00 | 
 (1 row)
 
 -- Another transfer with the same key will return the existing transfer
@@ -45,7 +45,7 @@ SELECT * FROM pgledger_create_transfer(
 );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata 
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
- pglt_01M5ZQABGHFZ5918A6AEWP63G2 | pgla_01M5ZQABGFEAB8GXX2BHK9YR9V | pgla_01M5ZQABGGEJKT8VA77ZYDT28B |  10.00 | 2026-10-27 22:22:28.368696+00 | 2026-10-27 22:22:28.368696+00 | 
+ pglt_01M64SK6HVE9R9JEP1H8P9317H | pgla_01M64SK6HRE25TEA0YS78FDM8Q | pgla_01M64SK6HRFQM9Y0J4WMXAMYW5 |  10.00 | 2026-10-29 21:38:27.513189+00 | 2026-10-29 21:38:27.513189+00 | 
 (1 row)
 
 -- But if the arguments are different, it will give an error:
@@ -55,7 +55,7 @@ SELECT * FROM pgledger_create_transfer(
     99.00,
     idempotency_key => :'idempotency_key'
 );
-ERROR:  Idempotency key (1a078b19-8538-4d18-b3b2-c1b20f9d6754) was already used with a different request
+ERROR:  Idempotency key (7a1119e6-4f03-4643-a14e-2b086ff800df) was already used with a different request
 CONTEXT:  PL/pgSQL function pgledger_create_transfers(transfer_request[],timestamp with time zone,jsonb,text) line 55 at RAISE
 SQL statement "SELECT * FROM pgledger_create_transfers(
         transfer_requests => array[(from_account_id, to_account_id, amount)::TRANSFER_REQUEST],
@@ -69,7 +69,7 @@ SELECT * FROM pgledger_idempotency_keys_view
 WHERE idempotency_key = :'idempotency_key';
            idempotency_key            | request_index |           transfer_id           
 --------------------------------------+---------------+---------------------------------
- 1a078b19-8538-4d18-b3b2-c1b20f9d6754 |             1 | pglt_01M5ZQABGHFZ5918A6AEWP63G2
+ 7a1119e6-4f03-4643-a14e-2b086ff800df |             1 | pglt_01M64SK6HVE9R9JEP1H8P9317H
 (1 row)
 
 -- Idempotency also works for batches of transfers:
@@ -83,8 +83,8 @@ SELECT * FROM pgledger_create_transfers(
 );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |          event_at          | metadata 
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+----------------------------+----------
- pglt_01M5ZQABGKF8Q8F2XRNKAWHSQT | pgla_01M5ZQABGFEAB8GXX2BHK9YR9V | pgla_01M5ZQABGGEJKT8VA77ZYDT28B |   1.00 | 2026-10-27 22:22:28.371364+00 | 2026-10-25 12:45:54.123+00 | 
- pglt_01M5ZQABGKFP3TSYS5V5H0JAK2 | pgla_01M5ZQABGFEAB8GXX2BHK9YR9V | pgla_01M5ZQABGGEJKT8VA77ZYDT28B |   2.00 | 2026-10-27 22:22:28.371364+00 | 2026-10-25 12:45:54.123+00 | 
+ pglt_01M64SK6HXE0QBMXV8RSS3RSRQ | pgla_01M64SK6HRE25TEA0YS78FDM8Q | pgla_01M64SK6HRFQM9Y0J4WMXAMYW5 |   1.00 | 2026-10-29 21:38:27.516756+00 | 2026-10-25 12:45:54.123+00 | 
+ pglt_01M64SK6HXEET9BRBS65X6161H | pgla_01M64SK6HRE25TEA0YS78FDM8Q | pgla_01M64SK6HRFQM9Y0J4WMXAMYW5 |   2.00 | 2026-10-29 21:38:27.516756+00 | 2026-10-25 12:45:54.123+00 | 
 (2 rows)
 
 SELECT * FROM pgledger_create_transfers(
@@ -97,8 +97,8 @@ SELECT * FROM pgledger_create_transfers(
 );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |          event_at          | metadata 
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+----------------------------+----------
- pglt_01M5ZQABGKF8Q8F2XRNKAWHSQT | pgla_01M5ZQABGFEAB8GXX2BHK9YR9V | pgla_01M5ZQABGGEJKT8VA77ZYDT28B |   1.00 | 2026-10-27 22:22:28.371364+00 | 2026-10-25 12:45:54.123+00 | 
- pglt_01M5ZQABGKFP3TSYS5V5H0JAK2 | pgla_01M5ZQABGFEAB8GXX2BHK9YR9V | pgla_01M5ZQABGGEJKT8VA77ZYDT28B |   2.00 | 2026-10-27 22:22:28.371364+00 | 2026-10-25 12:45:54.123+00 | 
+ pglt_01M64SK6HXE0QBMXV8RSS3RSRQ | pgla_01M64SK6HRE25TEA0YS78FDM8Q | pgla_01M64SK6HRFQM9Y0J4WMXAMYW5 |   1.00 | 2026-10-29 21:38:27.516756+00 | 2026-10-25 12:45:54.123+00 | 
+ pglt_01M64SK6HXEET9BRBS65X6161H | pgla_01M64SK6HRE25TEA0YS78FDM8Q | pgla_01M64SK6HRFQM9Y0J4WMXAMYW5 |   2.00 | 2026-10-29 21:38:27.516756+00 | 2026-10-25 12:45:54.123+00 | 
 (2 rows)
 
 -- Each transfer created in the batch gets a row in
@@ -107,8 +107,8 @@ SELECT * FROM pgledger_idempotency_keys_view
 WHERE idempotency_key = :'idempotency_key' || '-batch';
               idempotency_key               | request_index |           transfer_id           
 --------------------------------------------+---------------+---------------------------------
- 1a078b19-8538-4d18-b3b2-c1b20f9d6754-batch |             1 | pglt_01M5ZQABGKF8Q8F2XRNKAWHSQT
- 1a078b19-8538-4d18-b3b2-c1b20f9d6754-batch |             2 | pglt_01M5ZQABGKFP3TSYS5V5H0JAK2
+ 7a1119e6-4f03-4643-a14e-2b086ff800df-batch |             1 | pglt_01M64SK6HXE0QBMXV8RSS3RSRQ
+ 7a1119e6-4f03-4643-a14e-2b086ff800df-batch |             2 | pglt_01M64SK6HXEET9BRBS65X6161H
 (2 rows)
 
 -- The same batch of transfer requests, but in a different order, is rejected:
@@ -120,7 +120,7 @@ SELECT * FROM pgledger_create_transfers(
         (:'account1_id', :'account2_id', '1.00')
     ]::TRANSFER_REQUEST[]
 );
-ERROR:  Idempotency key (1a078b19-8538-4d18-b3b2-c1b20f9d6754-batch) was already used with a different request
+ERROR:  Idempotency key (7a1119e6-4f03-4643-a14e-2b086ff800df-batch) was already used with a different request
 CONTEXT:  PL/pgSQL function pgledger_create_transfers(transfer_request[],timestamp with time zone,jsonb,text) line 55 at RAISE
 -- A missing, null, or unique idempotency_key always creates a new transfer
 SELECT * FROM pgledger_create_transfer(
@@ -130,7 +130,7 @@ SELECT * FROM pgledger_create_transfer(
 );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata 
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
- pglt_01M5ZQABGNE21AEM775C5HXBYA | pgla_01M5ZQABGFEAB8GXX2BHK9YR9V | pgla_01M5ZQABGGEJKT8VA77ZYDT28B |  11.00 | 2026-10-27 22:22:28.372879+00 | 2026-10-27 22:22:28.372879+00 | 
+ pglt_01M64SK6HYFGW9BKQC00QRBFQH | pgla_01M64SK6HRE25TEA0YS78FDM8Q | pgla_01M64SK6HRFQM9Y0J4WMXAMYW5 |  11.00 | 2026-10-29 21:38:27.518562+00 | 2026-10-29 21:38:27.518562+00 | 
 (1 row)
 
 SELECT * FROM pgledger_create_transfer(
@@ -141,7 +141,7 @@ SELECT * FROM pgledger_create_transfer(
 );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata 
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
- pglt_01M5ZQABGNF34TC0C6Q1GTQWS6 | pgla_01M5ZQABGFEAB8GXX2BHK9YR9V | pgla_01M5ZQABGGEJKT8VA77ZYDT28B |  12.00 | 2026-10-27 22:22:28.373354+00 | 2026-10-27 22:22:28.373354+00 | 
+ pglt_01M64SK6HZEHKATR6W3ERX60KZ | pgla_01M64SK6HRE25TEA0YS78FDM8Q | pgla_01M64SK6HRFQM9Y0J4WMXAMYW5 |  12.00 | 2026-10-29 21:38:27.519158+00 | 2026-10-29 21:38:27.519158+00 | 
 (1 row)
 
 SELECT * FROM pgledger_create_transfer(
@@ -152,6 +152,6 @@ SELECT * FROM pgledger_create_transfer(
 );
                id                |         from_account_id         |          to_account_id          | amount |          created_at           |           event_at            | metadata 
 ---------------------------------+---------------------------------+---------------------------------+--------+-------------------------------+-------------------------------+----------
- pglt_01M5ZQABGPE3N9FQRXEHZ92C80 | pgla_01M5ZQABGFEAB8GXX2BHK9YR9V | pgla_01M5ZQABGGEJKT8VA77ZYDT28B |  12.00 | 2026-10-27 22:22:28.373852+00 | 2026-10-27 22:22:28.373852+00 | 
+ pglt_01M64SK6HZFPQVKBC241B1VEPW | pgla_01M64SK6HRE25TEA0YS78FDM8Q | pgla_01M64SK6HRFQM9Y0J4WMXAMYW5 |  12.00 | 2026-10-29 21:38:27.519607+00 | 2026-10-29 21:38:27.519607+00 | 
 (1 row)
 
