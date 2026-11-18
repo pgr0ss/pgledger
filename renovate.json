@@ -14,6 +14,26 @@
       "addLabels": [
         "{{datasource}}"
       ]
+    },
+    {
+      "description": "Bump the go directive in go.mod; Renovate leaves it alone by default",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepNames": [
+        "go"
+      ],
+      "matchDepTypes": [
+        "golang"
+      ],
+      "rangeStrategy": "bump"
+    },
+    {
+      "description": "Update Go in go.mod and mise.toml together",
+      "matchDepNames": [
+        "go"
+      ],
+      "groupName": "Go"
     }
   ],
   "postUpdateOptions": [
