@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-26.04
     strategy:
       matrix:
-        postgres_version: ["15", "16", "17", "18"]
+        postgres_version: ["15", "16", "17", "18", "19"]
 
     steps:
       - uses: actions/checkout@v7

@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: "postgres:${POSTGRES_VERSION:-18}"
+    image: "postgres:${POSTGRES_VERSION:-19}"
     command: >
       -c max_wal_size=2GB
     ports:

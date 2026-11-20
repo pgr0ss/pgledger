@@ -112,7 +112,7 @@ Shared helpers live in `go/testhelpers/`, which defines Go structs (Account, Tra
 
 Tests run in parallel against a shared database, so property assertions are scoped to the account ids each test case created. The schema must be loaded before running tests (`just dbreset`).
 
-PostgreSQL versions 15, 16, 17, and 18 are tested in CI.
+PostgreSQL versions 15, 16, 17, 18, and 19 are tested in CI.
 
 ## SQL formatting
 
