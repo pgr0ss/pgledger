@@ -14,7 +14,7 @@ import (
 func TestMatrixPostgresVersion(t *testing.T) {
 	expectedVersion := os.Getenv("POSTGRES_VERSION")
 	if expectedVersion == "" {
-		expectedVersion = "18"
+		expectedVersion = "19"
 	}
 	assert.Regexp(t, `^\d+$`, expectedVersion)
 
