@@ -1,6 +1,6 @@
 # pgledger
 
-A [double-entry ledger](https://en.wikipedia.org/wiki/Double-entry_bookkeeping) implementation in PostgreSQL. For a companion UI, check out [pgledger-visualizer](https://github.com/pgr0ss/pgledger-visualizer). 
+A [double-entry ledger](https://en.wikipedia.org/wiki/Double-entry_bookkeeping) implementation in PostgreSQL. For a companion UI, check out [pgledger-ui](https://github.com/pgr0ss/pgledger-ui). 
 
 ## Why pgledger
 
