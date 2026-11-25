@@ -804,9 +804,8 @@ func balanceAt(ctx context.Context, conn *pgxpool.Pool, accountID string, at tim
 	return balance, err
 }
 
-// assertReturnedMatchesRequests compares as a multiset: rows come back ORDER BY
-// id, and below PostgreSQL 18 ids are not monotonic within a microsecond
-// (pgledger_uuidv7_microsecond).
+// assertReturnedMatchesRequests compares in request order, which is part of
+// the batch contract even when generated ids are not monotonic.
 func assertReturnedMatchesRequests(tc hegel.TestCase, s *scope, reqs []request, returned []testhelpers.Transfer) {
 	ids := s.accountIDs()
 
@@ -820,8 +819,6 @@ func assertReturnedMatchesRequests(tc hegel.TestCase, s *scope, reqs []request, 
 		got = append(got, fmt.Sprintf("%s->%s %s",
 			t.FromAccountID, t.ToAccountID, ratString(mustRat(tc, "returned amount", t.Amount))))
 	}
-	slices.Sort(want)
-	slices.Sort(got)
 	if !slices.Equal(want, got) {
 		tc.Errorf("requested %v but got back %v", want, got)
 	}

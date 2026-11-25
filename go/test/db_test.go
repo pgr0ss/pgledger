@@ -922,6 +922,62 @@ func TestIdempotencyKeyReturnsExistingBatch(t *testing.T) {
 	assert.Equal(t, 1, foundAccount3.Version)
 }
 
+func TestIdempotentReplayReturnsTransfersInRequestOrder(t *testing.T) {
+	conn := testhelpers.SetupParallel(t)
+
+	tx, err := conn.Begin(t.Context())
+	assert.NoError(t, err)
+	defer func() { _ = tx.Rollback(t.Context()) }()
+
+	createAccount := func(name string) testhelpers.Account {
+		rows, err := tx.Query(t.Context(), "select * from pgledger_create_account($1, 'USD')", name)
+		assert.NoError(t, err)
+		account, err := pgx.CollectExactlyOneRow(rows, pgx.RowToStructByName[testhelpers.Account])
+		assert.NoError(t, err)
+		return account
+	}
+	account1 := createAccount("ordering 1")
+	account2 := createAccount("ordering 2")
+	account3 := createAccount("ordering 3")
+
+	// PostgreSQL versions below 18 can generate non-monotonic ids within one
+	// microsecond. Seed a claim whose id order is the reverse of its request
+	// order so this regression does not depend on that timing race.
+	suffix := strings.TrimPrefix(account1.ID, "pgla_")
+	firstTransferID := "pglt_Z" + suffix
+	secondTransferID := "pglt_A" + suffix
+	idempotencyKey := "request-order-" + account1.ID
+	eventAt, err := time.Parse(time.RFC3339, "2025-07-01T12:34:56Z")
+	assert.NoError(t, err)
+	metadata := `{"note": "request-order"}`
+
+	_, err = tx.Exec(t.Context(), `
+		INSERT INTO pgledger_transfers (id, from_account_id, to_account_id, amount, created_at, event_at, metadata)
+		VALUES
+			($1, $3, $4, 10, $6, $6, $7),
+			($2, $4, $5, 20, $6, $6, $7)`,
+		firstTransferID, secondTransferID, account1.ID, account2.ID, account3.ID, eventAt, metadata)
+	assert.NoError(t, err)
+
+	_, err = tx.Exec(t.Context(), `
+		INSERT INTO pgledger_idempotency_keys (idempotency_key, request_index, transfer_id)
+		VALUES ($1, 1, $2), ($1, 2, $3)`,
+		idempotencyKey, firstTransferID, secondTransferID)
+	assert.NoError(t, err)
+
+	replayed, err := queryTransfers(t, tx, `
+		select * from pgledger_create_transfers(
+			array[($1, $2, '10'), ($2, $3, '20')]::transfer_request[],
+			event_at => $4,
+			metadata => $5,
+			idempotency_key => $6)`,
+		account1.ID, account2.ID, account3.ID, eventAt, metadata, idempotencyKey)
+	assert.NoError(t, err)
+	if assert.Len(t, replayed, 2) {
+		assert.Equal(t, []string{firstTransferID, secondTransferID}, []string{replayed[0].ID, replayed[1].ID})
+	}
+}
+
 func TestIdempotencyKeyWithDifferentRequestIsRejected(t *testing.T) {
 	conn := testhelpers.SetupParallel(t)
 
