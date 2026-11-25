@@ -266,7 +266,7 @@ BEGIN
                 FROM pgledger_idempotency_keys k
                 INNER JOIN pgledger_transfers_view v ON k.transfer_id = v.id
                 WHERE k.idempotency_key = pgledger_create_transfers.idempotency_key
-                ORDER BY v.id;
+                ORDER BY k.request_index;
                 RETURN;
             END IF;
 
@@ -365,11 +365,11 @@ BEGIN
         FROM unnest(transfer_ids) WITH ORDINALITY AS claimed (transfer_id, request_index);
     END IF;
 
-    -- Return all created transfers
+    -- Return all created transfers in request order
     RETURN QUERY
-    SELECT *
-    FROM pgledger_transfers_view
-    WHERE id = ANY(transfer_ids)
-    ORDER BY id;
+    SELECT v.*
+    FROM unnest(transfer_ids) WITH ORDINALITY AS created (transfer_id, request_index)
+    INNER JOIN pgledger_transfers_view v ON v.id = created.transfer_id
+    ORDER BY created.request_index;
 END;
 $$ LANGUAGE plpgsql;

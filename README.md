@@ -84,7 +84,7 @@ The direction of the movement comes from the from/to accounts, not from the sign
 
 ### Batch Ordering
 
-`pgledger_create_transfers` applies its requests in array order, and each account's balance constraints are checked after each request rather than at the end of the batch. The order of requests within a batch is therefore significant: the same set of requests can succeed in one order and be rejected in another.
+`pgledger_create_transfers` applies its requests in array order, and each account's balance constraints are checked after each request rather than at the end of the batch. The order of requests within a batch is therefore significant: the same set of requests can succeed in one order and be rejected in another. Rows are returned in that same request order, including when an idempotent call replays an earlier batch.
 
 For example, take an account `y` which does not allow a negative balance, plus accounts `x` and `z` which do (the default), all starting at a zero balance:
 
